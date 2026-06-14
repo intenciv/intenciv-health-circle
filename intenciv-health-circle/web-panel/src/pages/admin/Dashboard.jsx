@@ -33,10 +33,7 @@ export default function Dashboard() {
               ))}
             </tbody>
           </table>
-          <p style={{ color: 'var(--text-mid)', marginTop: 16 }}>
-            Salesperson management, plans &amp; benefits, card batches, reception desk, offers and reports are wired in the backend — call <code>/admin/salespersons</code>, <code>/admin/plans</code>, <code>/admin/cards/batch</code>, <code>/admin/reception/lookup/:code</code> (with <code>x-admin-password</code> header), <code>/admin/offers</code>, and <code>/admin/reports/*</code> from this panel.
-          </p>
-        </>
+                </>
       )}
     </div>
   );

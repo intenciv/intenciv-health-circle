@@ -106,7 +106,8 @@ router.post(
         return res.status(409).json({ error: 'card_not_activatable' });
       }
 
-      const otp = String(crypto.randomInt(0, 10000)).padStart(4, '0');
+      // AuthKey template uses a 6-digit OTP placeholder ({#2fa#}).
+      const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
       await pool.execute(
@@ -130,7 +131,7 @@ router.post(
   '/activation/verify-otp',
   body('card_id').isString().notEmpty(),
   body('customer_phone').isString().notEmpty(),
-  body('otp').isString().isLength({ min: 4, max: 4 }),
+  body('otp').isString().isLength({ min: 6, max: 6 }),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);

@@ -14,7 +14,7 @@ export default function Activate() {
   const [pickedCard, setPickedCard] = useState(null);
   const [name, setName]   = useState('');
   const [phone, setPhone] = useState('');
-  const [otp, setOtp]     = useState(['','','','']);
+  const [otp, setOtp]     = useState(['','','','','','']);
   const [pin, setPin]     = useState(['','','','']);
   const [activationToken, setActivationToken] = useState(null);
   const [result, setResult] = useState(null);
@@ -34,14 +34,14 @@ export default function Activate() {
 
   function reset() {
     setStep(1); setPickedCard(null); setName(''); setPhone('');
-    setOtp(['','','','']); setPin(['','','','']);
+    setOtp(['','','','','','']); setPin(['','','','']);
     setActivationToken(null); setResult(null); setError('');
   }
 
   function setOtpDigit(i, v) {
     if (!/^\d?$/.test(v)) return;
     const n = [...otp]; n[i] = v; setOtp(n);
-    if (v && i < 3) otpRefs.current[i + 1]?.focus();
+    if (v && i < 5) otpRefs.current[i + 1]?.focus();
   }
   function setPinDigit(i, v) {
     if (!/^\d?$/.test(v)) return;
@@ -69,7 +69,7 @@ export default function Activate() {
   async function verifyOtp() {
     setError('');
     const code = otp.join('');
-    if (code.length !== 4) { setError('Enter the 4-digit OTP from the customer.'); return; }
+    if (code.length !== 6) { setError('Enter the 6-digit OTP from the customer.'); return; }
     setLoading(true);
     try {
       const { data } = await api.post('/salesperson/activation/verify-otp', {
@@ -175,13 +175,13 @@ export default function Activate() {
           {step === 3 && (
             <View style={styles.card}>
               <Text style={styles.h2}>Step 3 — Verify customer's mobile</Text>
-              <Text style={styles.help}>Customer received an OTP on +91 {phone}. Ask them to read it out (this OTP only verifies the number — it does NOT activate the card).</Text>
-              <View style={styles.fourBoxes}>
+              <Text style={styles.help}>Customer received a 6-digit OTP on +91 {phone}. Ask them to read it out (this OTP only verifies the number — it does NOT activate the card).</Text>
+              <View style={styles.otpBoxes}>
                 {otp.map((d, i) => (
                   <TextInput key={i} testID={`otp-box-${i}`} ref={el => (otpRefs.current[i] = el)} value={d}
                     onChangeText={v => setOtpDigit(i, v)}
                     onKeyPress={({ nativeEvent }) => { if (nativeEvent.key === 'Backspace' && !otp[i] && i > 0) otpRefs.current[i - 1]?.focus(); }}
-                    keyboardType="number-pad" maxLength={1} style={styles.boxInput} />
+                    keyboardType="number-pad" maxLength={1} style={styles.otpBox} />
                 ))}
               </View>
               {error ? <Text style={styles.err}>{error}</Text> : null}
@@ -267,6 +267,8 @@ const styles = StyleSheet.create({
 
   fourBoxes: { flexDirection: 'row', justifyContent: 'center', gap: 14, marginTop: 16 },
   boxInput:{ width: 56, height: 56, borderRadius: RADIUS.button, backgroundColor: COLORS.surfaceBlue, borderWidth: 1.5, borderColor: COLORS.border, fontSize: 22, fontWeight: '700', textAlign: 'center', color: COLORS.deepNavy },
+  otpBoxes:{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 16 },
+  otpBox:  { width: 44, height: 52, borderRadius: RADIUS.button, backgroundColor: COLORS.surfaceBlue, borderWidth: 1.5, borderColor: COLORS.border, fontSize: 20, fontWeight: '700', textAlign: 'center', color: COLORS.deepNavy },
 
   err:    { color: COLORS.dangerRed, marginTop: 12, fontSize: 13 },
   row2:   { flexDirection: 'row', gap: 10, marginTop: 18 },

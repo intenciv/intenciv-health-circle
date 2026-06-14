@@ -1,23 +1,28 @@
 -- =====================================================================
--- IntenCiv Health Circle - Seed 003
--- First admin user. Replace phone with the real admin number before
--- running in production. Admins log in via OTP just like every other
--- user — no password is needed.
+-- Seed: first admin account.
+--
+-- Default credentials:
+--   email    : intencivhealthcare@gmail.com
+--   password : 123456    (CHANGE IMMEDIATELY in production)
+--
+-- The password_hash below is a bcrypt hash of "123456" generated with
+-- cost factor 10. Regenerate before production:
+--   node -e "console.log(require('bcryptjs').hashSync('YourNewPassword', 10))"
 -- =====================================================================
 
 USE `intenciv_db`;
 
-INSERT INTO `users` (`id`, `phone`, `full_name`, `email`, `role`, `is_active`)
+INSERT INTO users (id, role, email, full_name, password_hash, is_active, created_at)
 VALUES (
   UUID(),
-  '+919999999999',           -- TODO: change to real admin mobile (E.164 +91XXXXXXXXXX)
-  'IntenCiv Admin',
-  'admin@intenciv.in',
   'admin',
-  1
+  'intencivhealthcare@gmail.com',
+  'IntenCiv Admin',
+  '$2a$10$rkqIVJ8t6Sn1qIVPyPjyEOjnNDqKkpzg5pGzVJ8M/y6Vc2GgY8Hp.',
+  1,
+  NOW()
 )
 ON DUPLICATE KEY UPDATE
   role = 'admin',
   is_active = 1,
-  full_name = VALUES(full_name),
-  email = VALUES(email);
+  full_name = VALUES(full_name);

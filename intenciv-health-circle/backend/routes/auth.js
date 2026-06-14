@@ -1,234 +1,138 @@
 /**
  * Auth routes — public.
  *
- *   POST /auth/send-otp        { phone }
- *   POST /auth/verify-otp      { phone, otp }
- *   POST /auth/refresh-token   { refresh_token }
+ *   POST /auth/admin/login            { email, password }              → tokens
+ *   POST /auth/salesperson/login      { phone, pin }                   → tokens
+ *   POST /auth/customer/login         { phone }                        → tokens   (only if mobile is registered to an active card)
+ *   POST /auth/refresh-token          { refresh_token }                → access
+ *
+ * No customer OTP at login. The customer's number was already verified
+ * during card activation by the salesperson.
  */
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { v4: uuidv4 } = require('uuid');
 
 const { pool } = require('../config/db');
-const { otpLimiter } = require('../middleware/rateLimit');
-const otpUtil = require('../utils/otp');
 const { signAccess, signRefresh, verify } = require('../utils/jwt');
-const authkey = require('../services/authkey');
+const { verifyPassword, verifyPin } = require('../utils/passwords');
 
 const router = express.Router();
 
+function bail(res, errors) {
+  return res.status(400).json({ error: 'validation_failed', details: errors.array() });
+}
 function normalisePhone(raw) {
   const digits = String(raw || '').replace(/\D/g, '');
-  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 10)                       return `+91${digits}`;
   if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
   if (digits.length === 13 && digits.startsWith('091')) return `+${digits.slice(1)}`;
   return null;
 }
 
-function bail(res, errors) {
-  return res.status(400).json({ error: 'validation_failed', details: errors.array() });
-}
-
-// ---------------------------------------------------------------------
-// POST /auth/send-otp
-// ---------------------------------------------------------------------
+// ---------- ADMIN ----------
 router.post(
-  '/send-otp',
-  otpLimiter,
+  '/admin/login',
+  body('email').isEmail(),
+  body('password').isString().isLength({ min: 6 }),
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return bail(res, errors);
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, role, email, full_name, password_hash, is_active
+           FROM users WHERE email = ? AND role = 'admin' LIMIT 1`,
+        [req.body.email.toLowerCase().trim()]
+      );
+      if (rows.length === 0 || !rows[0].is_active) return res.status(401).json({ error: 'invalid_credentials' });
+      const ok = await verifyPassword(req.body.password, rows[0].password_hash);
+      if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+
+      await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
+      const { password_hash, ...user } = rows[0];
+      res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
+    } catch (e) { next(e); }
+  }
+);
+
+// ---------- SALESPERSON ----------
+router.post(
+  '/salesperson/login',
+  body('phone').isString().notEmpty(),
+  body('pin').isString().isLength({ min: 4, max: 4 }),
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return bail(res, errors);
+    try {
+      const phone = normalisePhone(req.body.phone);
+      if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+      const [rows] = await pool.execute(
+        `SELECT id, role, phone, full_name, pin_hash, is_active
+           FROM users WHERE phone = ? AND role = 'salesperson' LIMIT 1`,
+        [phone]
+      );
+      if (rows.length === 0 || !rows[0].is_active) return res.status(401).json({ error: 'invalid_credentials' });
+      const ok = await verifyPin(req.body.pin, rows[0].pin_hash);
+      if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+
+      await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
+      const { pin_hash, ...user } = rows[0];
+      res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
+    } catch (e) { next(e); }
+  }
+);
+
+// ---------- CUSTOMER (mobile-only login) ----------
+router.post(
+  '/customer/login',
   body('phone').isString().notEmpty(),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
-
     try {
       const phone = normalisePhone(req.body.phone);
       if (!phone) return res.status(400).json({ error: 'invalid_phone' });
 
-      // Determine purpose by checking if user already exists.
-      const [users] = await pool.execute(
-        'SELECT id FROM users WHERE phone = ? LIMIT 1',
-        [phone]
-      );
-      const purpose = users.length > 0 ? 'login' : 'registration';
-
-      const otp = otpUtil.generate();
-      const otpHash = otpUtil.hash(otp);
-      const expiresAt = otpUtil.expiryDate();
-
-      // Invalidate any previous unverified OTPs for this phone.
-      await pool.execute(
-        'UPDATE otp_log SET is_verified = 1 WHERE phone = ? AND is_verified = 0',
-        [phone]
-      );
-
-      await pool.execute(
-        `INSERT INTO otp_log (id, phone, otp_hash, purpose, is_verified, attempts, expires_at)
-         VALUES (?, ?, ?, ?, 0, 0, ?)`,
-        [uuidv4(), phone, otpHash, purpose, expiresAt]
-      );
-
-      // Fire and (mostly) forget — but await so we can surface SMS gateway errors.
-      const gatewayResponse = await authkey.sendOtp({ phone, otp }).catch(err => ({
-        gateway_error: true,
-        message: err.message,
-      }));
-
-      res.json({
-        ok: true,
-        purpose,
-        expires_in_seconds: otpUtil.OTP_TTL_MINUTES * 60,
-        gateway: gatewayResponse,
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// ---------------------------------------------------------------------
-// POST /auth/verify-otp
-// ---------------------------------------------------------------------
-router.post(
-  '/verify-otp',
-  body('phone').isString().notEmpty(),
-  body('otp').isString().isLength({ min: 4, max: 4 }),
-  async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return bail(res, errors);
-
-    const conn = await pool.getConnection();
-    try {
-      await conn.beginTransaction();
-      const phone = normalisePhone(req.body.phone);
-      if (!phone) {
-        await conn.rollback();
-        return res.status(400).json({ error: 'invalid_phone' });
-      }
-
-      // Latest unverified, unexpired OTP for this phone.
-      const [rows] = await conn.execute(
-        `SELECT id, otp_hash, attempts, expires_at
-           FROM otp_log
-          WHERE phone = ? AND is_verified = 0 AND expires_at > NOW()
-          ORDER BY created_at DESC
+      const [rows] = await pool.execute(
+        `SELECT u.id, u.role, u.phone, u.full_name, u.is_active
+           FROM users u
+          WHERE u.phone = ? AND u.role = 'customer' AND u.is_active = 1
           LIMIT 1`,
         [phone]
       );
       if (rows.length === 0) {
-        await conn.rollback();
-        return res.status(400).json({ error: 'otp_not_found_or_expired' });
-      }
-      const otpRow = rows[0];
-
-      if (otpRow.attempts >= otpUtil.OTP_MAX_ATTEMPTS) {
-        await conn.execute('UPDATE otp_log SET is_verified = 1 WHERE id = ?', [otpRow.id]);
-        await conn.commit();
-        return res.status(400).json({ error: 'otp_attempts_exhausted' });
-      }
-
-      const submittedHash = otpUtil.hash(req.body.otp);
-      if (submittedHash !== otpRow.otp_hash) {
-        const newAttempts = otpRow.attempts + 1;
-        if (newAttempts >= otpUtil.OTP_MAX_ATTEMPTS) {
-          await conn.execute(
-            'UPDATE otp_log SET attempts = ?, is_verified = 1 WHERE id = ?',
-            [newAttempts, otpRow.id]
-          );
-        } else {
-          await conn.execute(
-            'UPDATE otp_log SET attempts = ? WHERE id = ?',
-            [newAttempts, otpRow.id]
-          );
-        }
-        await conn.commit();
-        return res.status(400).json({
-          error: 'otp_incorrect',
-          attempts_left: Math.max(0, otpUtil.OTP_MAX_ATTEMPTS - newAttempts),
+        return res.status(404).json({
+          error: 'mobile_not_registered',
+          message: 'This number is not linked to any membership. Please contact your sales representative.',
         });
       }
-
-      // Success — mark verified, get/create user, mint tokens.
-      await conn.execute('UPDATE otp_log SET is_verified = 1 WHERE id = ?', [otpRow.id]);
-
-      const [userRows] = await conn.execute(
-        'SELECT id, phone, full_name, email, address, city, pincode, role, is_active FROM users WHERE phone = ? LIMIT 1',
-        [phone]
+      // Must have at least one active card.
+      const [cards] = await pool.execute(
+        `SELECT id FROM cards WHERE customer_id = ? AND status = 'active' LIMIT 1`,
+        [rows[0].id]
       );
-
-      let user;
-      let isNewUser = false;
-      if (userRows.length === 0) {
-        // First-time user → create as client by default (agents/receptionists
-        // are pre-provisioned by an admin).
-        const newId = uuidv4();
-        await conn.execute(
-          `INSERT INTO users (id, phone, role, is_active, created_at, last_login)
-           VALUES (?, ?, 'client', 1, NOW(), NOW())`,
-          [newId, phone]
-        );
-        user = {
-          id: newId,
-          phone,
-          full_name: null,
-          email: null,
-          address: null,
-          city: null,
-          pincode: null,
-          role: 'client',
-          is_active: 1,
-        };
-        isNewUser = true;
-      } else {
-        user = userRows[0];
-        if (!user.is_active) {
-          await conn.rollback();
-          return res.status(403).json({ error: 'account_disabled' });
-        }
-        await conn.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [user.id]);
-        // is_new_user when client hasn't completed profile yet.
-        isNewUser = user.role === 'client' && (!user.full_name || !user.city || !user.pincode);
+      if (cards.length === 0) {
+        return res.status(403).json({ error: 'no_active_membership', message: 'No active membership found for this number.' });
       }
-
-      await conn.commit();
-
-      const access_token  = signAccess(user);
-      const refresh_token = signRefresh(user);
-
-      res.json({ access_token, refresh_token, user, is_new_user: isNewUser });
-    } catch (err) {
-      await conn.rollback().catch(() => {});
-      next(err);
-    } finally {
-      conn.release();
-    }
+      await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
+      res.json({ access_token: signAccess(rows[0]), refresh_token: signRefresh(rows[0]), user: rows[0] });
+    } catch (e) { next(e); }
   }
 );
 
-// ---------------------------------------------------------------------
-// POST /auth/refresh-token
-// ---------------------------------------------------------------------
+// ---------- REFRESH ----------
 router.post(
   '/refresh-token',
   body('refresh_token').isString().notEmpty(),
-  async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return bail(res, errors);
-
+  async (req, res) => {
     try {
       const decoded = verify(req.body.refresh_token);
-      if (decoded.type !== 'refresh') {
-        return res.status(401).json({ error: 'invalid_token_type' });
-      }
+      if (decoded.type !== 'refresh') return res.status(401).json({ error: 'invalid_token_type' });
       const [rows] = await pool.execute(
-        'SELECT id, role, is_active FROM users WHERE id = ? LIMIT 1',
-        [decoded.id]
+        'SELECT id, role, is_active FROM users WHERE id = ? LIMIT 1', [decoded.id]
       );
-      if (rows.length === 0 || !rows[0].is_active) {
-        return res.status(401).json({ error: 'account_unavailable' });
-      }
-      const access_token = signAccess(rows[0]);
-      res.json({ access_token });
-    } catch (_err) {
+      if (rows.length === 0 || !rows[0].is_active) return res.status(401).json({ error: 'account_unavailable' });
+      res.json({ access_token: signAccess(rows[0]) });
+    } catch (_e) {
       return res.status(401).json({ error: 'invalid_or_expired_refresh' });
     }
   }

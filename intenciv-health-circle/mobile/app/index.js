@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useAuth } from '../hooks/useAuth';
@@ -15,16 +14,8 @@ export default function Index() {
     );
   }
 
-  if (!user) return <Redirect href="/phone-entry" />;
-
-  // Force profile completion for clients.
-  if (user.role === 'client' && (!user.full_name || !user.city || !user.pincode)) {
-    return <Redirect href="/profile-setup" />;
-  }
-
-  if (user.role === 'sales_agent') return <Redirect href="/(tabs)/agent-home" />;
-  if (user.role === 'client')      return <Redirect href="/(tabs)/home" />;
-
-  // Receptionists/admins use the web panel.
-  return <Redirect href="/phone-entry" />;
+  if (!user) return <Redirect href="/role-select" />;
+  if (user.role === 'salesperson') return <Redirect href="/(tabs)/sp-home" />;
+  if (user.role === 'customer')    return <Redirect href="/(tabs)/home" />;
+  return <Redirect href="/role-select" />;
 }

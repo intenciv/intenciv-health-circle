@@ -9,10 +9,12 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "seed-admin-hash": "node -e \"console.log(require('bcryptjs').hashSync(process.argv[1] || '123456', 10))\""
   },
   "dependencies": {
     "axios": "^1.7.7",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

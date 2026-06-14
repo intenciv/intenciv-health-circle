@@ -1,403 +1,545 @@
 /**
  * Admin routes — role: admin.
  *
- *   POST /admin/tiers
- *   PUT  /admin/tiers/:id
- *   POST /admin/activation-codes
- *   GET  /admin/reports/sales         (?from, ?to, ?agent_id, ?tier_id, ?format=csv)
- *   GET  /admin/reports/coupons       (?status, ?test, ?from, ?to, ?format=csv)
- *   POST /admin/users
- *   PUT  /admin/users/:id/toggle
- *   GET  /admin/dashboard
- *   GET  /admin/tiers
- *   GET  /admin/activation-codes
- *   GET  /admin/users
+ * Dashboard + Salesperson + Plan/Benefit + Card-batch + Reception + Offers + Reports.
+ *
+ * Reception lookup / avail require an additional `x-admin-password`
+ * header on every call (see middleware/auth.js → requireAdminPassword).
  */
 const express = require('express');
-const { body, validationResult, query } = require('express-validator');
+const { body, validationResult } = require('express-validator');
 const { v4: uuidv4 } = require('uuid');
 
 const { pool } = require('../config/db');
-const { authenticate, requireRole } = require('../middleware/auth');
-const { activationCode } = require('../utils/codes');
+const { authenticate, requireRole, requireAdminPassword } = require('../middleware/auth');
+const { hashPassword, hashPin, isValidPin, verifyPassword } = require('../utils/passwords');
+const { allocateCardSequences } = require('../utils/cards');
+const socket = require('../services/socket');
 
 const router = express.Router();
-
 router.use(authenticate, requireRole('admin'));
 
-// ---------- helpers ----------
-function bail(res, errors) {
-  return res.status(400).json({ error: 'validation_failed', details: errors.array() });
+function bail(res, errors) { return res.status(400).json({ error: 'validation_failed', details: errors.array() }); }
+function normalisePhone(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 10) return `+91${d}`;
+  if (d.length === 12 && d.startsWith('91')) return `+${d}`;
+  return null;
 }
-function csvCell(val) {
-  if (val === null || val === undefined) return '';
-  const s = String(val);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-function toCSV(rows) {
+function csv(rows) {
   if (rows.length === 0) return '';
   const headers = Object.keys(rows[0]);
-  const lines = [headers.join(',')];
-  for (const r of rows) lines.push(headers.map(h => csvCell(r[h])).join(','));
-  return lines.join('\n');
+  return [headers.join(','), ...rows.map(r => headers.map(h => {
+    const v = r[h]; if (v === null || v === undefined) return '';
+    const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(','))].join('\n');
 }
 function sendCSV(res, name, rows) {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${name}.csv"`);
-  res.send(toCSV(rows));
+  res.send(csv(rows));
 }
 
-// ---------- dashboard ----------
+// ============ DASHBOARD ============
 router.get('/dashboard', async (_req, res, next) => {
   try {
-    const [[booklets]] = await pool.execute('SELECT COUNT(*) AS c FROM booklets');
-    const [[activeCoupons]] = await pool.execute(`SELECT COUNT(*) AS c FROM coupons WHERE status = 'active'`);
-    const [[availedCoupons]] = await pool.execute(`SELECT COUNT(*) AS c FROM coupons WHERE status = 'availed'`);
-    const [[todayActivations]] = await pool.execute(
-      `SELECT COUNT(*) AS c FROM booklets WHERE DATE(activated_at) = CURDATE()`
+    const q = async (sql, p=[]) => (await pool.execute(sql, p))[0][0].c;
+    const r = async (sql, p=[]) => (await pool.execute(sql, p))[0][0].s;
+
+    const today      = await q(`SELECT COUNT(*) AS c FROM cards WHERE status = 'active' AND DATE(activated_at) = CURDATE()`);
+    const month      = await q(`SELECT COUNT(*) AS c FROM cards WHERE status = 'active' AND YEAR(activated_at)=YEAR(CURDATE()) AND MONTH(activated_at)=MONTH(CURDATE())`);
+    const allTime    = await q(`SELECT COUNT(*) AS c FROM cards WHERE status IN ('active','expired')`);
+    const activeNow  = await q(`SELECT COUNT(*) AS c FROM cards WHERE status = 'active' AND expires_at > NOW()`);
+    const expired    = await q(`SELECT COUNT(*) AS c FROM cards WHERE status = 'expired' OR (status = 'active' AND expires_at <= NOW())`);
+
+    const revMonth   = (await pool.execute(
+      `SELECT IFNULL(SUM(amount_paid),0) AS s FROM cards
+        WHERE status = 'active' AND YEAR(activated_at)=YEAR(CURDATE()) AND MONTH(activated_at)=MONTH(CURDATE())`
+    ))[0][0].s;
+    const revAll     = (await pool.execute(
+      `SELECT IFNULL(SUM(amount_paid),0) AS s FROM cards WHERE status IN ('active','expired')`
+    ))[0][0].s;
+
+    const [topSp] = await pool.execute(
+      `SELECT u.id, u.full_name, u.phone, COUNT(c.id) AS cards_sold,
+              IFNULL(SUM(c.amount_paid),0) AS revenue
+         FROM users u
+    LEFT JOIN cards c ON c.activated_by_salesperson = u.id AND c.status IN ('active','expired')
+        WHERE u.role = 'salesperson'
+        GROUP BY u.id ORDER BY cards_sold DESC LIMIT 10`
     );
-    const [[agents]] = await pool.execute(`SELECT COUNT(*) AS c FROM users WHERE role = 'sales_agent' AND is_active = 1`);
-    const [[receptionists]] = await pool.execute(`SELECT COUNT(*) AS c FROM users WHERE role = 'receptionist' AND is_active = 1`);
-    const [[clients]] = await pool.execute(`SELECT COUNT(*) AS c FROM users WHERE role = 'client'`);
 
     res.json({
-      total_booklets:       booklets.c,
-      active_coupons:       activeCoupons.c,
-      availed_coupons:      availedCoupons.c,
-      today_activations:    todayActivations.c,
-      agents_count:         agents.c,
-      receptionists_count:  receptionists.c,
-      clients_count:        clients.c,
+      cards_today:       today,
+      cards_this_month:  month,
+      cards_all_time:    allTime,
+      active_memberships:    activeNow,
+      expired_memberships:   expired,
+      revenue_this_month: Number(revMonth),
+      revenue_all_time:   Number(revAll),
+      top_salespersons:   topSp,
     });
-  } catch (err) { next(err); }
+  } catch (e) { next(e); }
 });
 
-// ---------- tiers ----------
-router.get('/tiers', async (_req, res, next) => {
+// ============ SALESPERSONS ============
+router.get('/salespersons', async (_req, res, next) => {
   try {
-    const [tiers] = await pool.execute(
-      `SELECT id, name, price, description, validity_days, is_active, created_at
-         FROM booklet_tiers ORDER BY price ASC`
+    const [rows] = await pool.execute(
+      `SELECT u.id, u.full_name, u.phone, u.is_active, u.created_at, u.last_login,
+              (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND DATE(c.activated_at)=CURDATE())              AS today_count,
+              (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND c.activated_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS week_count,
+              (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND YEAR(c.activated_at)=YEAR(CURDATE()) AND MONTH(c.activated_at)=MONTH(CURDATE())) AS month_count,
+              (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND c.status IN ('active','expired'))            AS total_count
+         FROM users u WHERE u.role = 'salesperson' ORDER BY u.full_name ASC`
     );
-    const [tests] = await pool.execute(
-      `SELECT id, tier_id, test_name, original_price, discounted_price, sort_order
-         FROM tier_tests ORDER BY tier_id, sort_order ASC`
-    );
-    const byTier = {};
-    for (const t of tests) {
-      (byTier[t.tier_id] ||= []).push(t);
-    }
-    res.json({ tiers: tiers.map(t => ({ ...t, tests: byTier[t.id] || [] })) });
-  } catch (err) { next(err); }
+    res.json({ salespersons: rows });
+  } catch (e) { next(e); }
 });
 
 router.post(
-  '/tiers',
-  body('name').isString().notEmpty(),
-  body('price').isFloat({ min: 0 }),
-  body('description').optional({ nullable: true }).isString(),
-  body('validity_days').optional().isInt({ min: 1 }),
-  body('tests').isArray({ min: 1 }),
-  body('tests.*.test_name').isString().notEmpty(),
-  body('tests.*.original_price').isFloat({ min: 0 }),
-  body('tests.*.discounted_price').isFloat({ min: 0 }),
+  '/salespersons',
+  body('full_name').isString().isLength({ min: 2, max: 100 }),
+  body('phone').isString().notEmpty(),
+  body('pin').isString(),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
+    try {
+      const phone = normalisePhone(req.body.phone);
+      if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+      if (!isValidPin(req.body.pin)) return res.status(400).json({ error: 'pin_must_be_4_digits' });
 
+      const [exists] = await pool.execute('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
+      if (exists.length > 0) return res.status(409).json({ error: 'phone_already_in_use' });
+
+      const id = uuidv4();
+      const pinHash = await hashPin(req.body.pin);
+      await pool.execute(
+        `INSERT INTO users (id, role, phone, full_name, pin_hash, is_active, created_at)
+         VALUES (?, 'salesperson', ?, ?, ?, 1, NOW())`,
+        [id, phone, req.body.full_name, pinHash]
+      );
+      res.status(201).json({ id, phone, full_name: req.body.full_name });
+    } catch (e) { next(e); }
+  }
+);
+
+router.put(
+  '/salespersons/:id',
+  body('full_name').optional().isString(),
+  body('phone').optional().isString(),
+  body('pin').optional().isString(),
+  body('is_active').optional().isBoolean(),
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return bail(res, errors);
+    try {
+      const sets = [], params = [];
+      if (req.body.full_name) { sets.push('full_name = ?'); params.push(req.body.full_name); }
+      if (req.body.phone)     {
+        const p = normalisePhone(req.body.phone);
+        if (!p) return res.status(400).json({ error: 'invalid_phone' });
+        sets.push('phone = ?'); params.push(p);
+      }
+      if (req.body.pin) {
+        if (!isValidPin(req.body.pin)) return res.status(400).json({ error: 'pin_must_be_4_digits' });
+        sets.push('pin_hash = ?'); params.push(await hashPin(req.body.pin));
+      }
+      if (typeof req.body.is_active === 'boolean') {
+        sets.push('is_active = ?'); params.push(req.body.is_active ? 1 : 0);
+      }
+      if (sets.length === 0) return res.status(400).json({ error: 'nothing_to_update' });
+      params.push(req.params.id);
+      await pool.execute(`UPDATE users SET ${sets.join(', ')} WHERE id = ? AND role = 'salesperson'`, params);
+      res.json({ ok: true });
+    } catch (e) { next(e); }
+  }
+);
+
+router.delete('/salespersons/:id', async (req, res, next) => {
+  try {
+    // Soft delete = deactivate (we keep card history intact).
+    await pool.execute(`UPDATE users SET is_active = 0 WHERE id = ? AND role = 'salesperson'`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ============ PLANS + BENEFITS ============
+router.get('/plans', async (_req, res, next) => {
+  try {
+    const [plans] = await pool.execute(`SELECT * FROM plans ORDER BY is_corporate ASC, price ASC`);
+    const [benefits] = await pool.execute(`SELECT * FROM plan_benefits ORDER BY plan_id, sort_order ASC`);
+    const map = {};
+    benefits.forEach(b => (map[b.plan_id] ||= []).push(b));
+    res.json({ plans: plans.map(p => ({ ...p, benefits: map[p.id] || [] })) });
+  } catch (e) { next(e); }
+});
+
+router.post(
+  '/plans',
+  body('name').isString().notEmpty(),
+  body('price').isFloat({ min: 0 }),
+  body('validity_days').optional().isInt({ min: 1 }),
+  body('is_corporate').optional().isBoolean(),
+  body('benefits').isArray({ min: 1 }),
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return bail(res, errors);
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
       const id = uuidv4();
       await conn.execute(
-        `INSERT INTO booklet_tiers (id, name, price, description, validity_days, is_active, created_at)
-         VALUES (?, ?, ?, ?, ?, 1, NOW())`,
-        [id, req.body.name, req.body.price, req.body.description ?? null, req.body.validity_days || 365]
+        `INSERT INTO plans (id, name, description, price, validity_days, is_corporate, corporate_client_name, min_card_quantity, is_active, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
+        [
+          id, req.body.name, req.body.description || null, req.body.price,
+          req.body.validity_days || 365, req.body.is_corporate ? 1 : 0,
+          req.body.corporate_client_name || null, req.body.min_card_quantity || 1,
+        ]
       );
-      for (let i = 0; i < req.body.tests.length; i++) {
-        const t = req.body.tests[i];
+      for (let i = 0; i < req.body.benefits.length; i++) {
+        const b = req.body.benefits[i];
         await conn.execute(
-          `INSERT INTO tier_tests (id, tier_id, test_name, original_price, discounted_price, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [uuidv4(), id, t.test_name, t.original_price, t.discounted_price, i + 1]
+          `INSERT INTO plan_benefits (id, plan_id, benefit_code, name, description, num_coupons, discount_type, discount_value, conditions, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(), id,
+            String(b.benefit_code || 'XX').toUpperCase().slice(0, 4),
+            b.name, b.description || null,
+            Number(b.num_coupons) || 1,
+            b.discount_type || 'percent',
+            b.discount_value ?? null,
+            b.conditions || null,
+            i + 1,
+          ]
         );
       }
       await conn.commit();
       res.status(201).json({ id });
-    } catch (err) {
-      await conn.rollback().catch(() => {});
-      next(err);
-    } finally {
-      conn.release();
-    }
+    } catch (e) { await conn.rollback().catch(() => {}); next(e); }
+    finally { conn.release(); }
   }
 );
 
 router.put(
-  '/tiers/:id',
-  body('name').optional().isString().notEmpty(),
-  body('price').optional().isFloat({ min: 0 }),
-  body('description').optional({ nullable: true }).isString(),
-  body('validity_days').optional().isInt({ min: 1 }),
-  body('is_active').optional().isBoolean(),
-  body('tests').optional().isArray(),
+  '/plans/:id',
+  body('benefits').optional().isArray(),
   async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return bail(res, errors);
-
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-
-      const fields = ['name', 'price', 'description', 'validity_days', 'is_active'];
-      const sets = [];
-      const params = [];
+      const fields = ['name','description','price','validity_days','is_corporate','corporate_client_name','min_card_quantity','is_active'];
+      const sets = [], params = [];
       for (const f of fields) {
         if (Object.prototype.hasOwnProperty.call(req.body, f)) {
-          sets.push(`\`${f}\` = ?`);
-          params.push(req.body[f]);
+          sets.push(`${f} = ?`);
+          params.push(typeof req.body[f] === 'boolean' ? (req.body[f] ? 1 : 0) : req.body[f]);
         }
       }
       if (sets.length > 0) {
         params.push(req.params.id);
-        await conn.execute(`UPDATE booklet_tiers SET ${sets.join(', ')} WHERE id = ?`, params);
+        await conn.execute(`UPDATE plans SET ${sets.join(', ')} WHERE id = ?`, params);
       }
-
-      if (Array.isArray(req.body.tests)) {
-        await conn.execute(`DELETE FROM tier_tests WHERE tier_id = ?`, [req.params.id]);
-        for (let i = 0; i < req.body.tests.length; i++) {
-          const t = req.body.tests[i];
+      if (Array.isArray(req.body.benefits)) {
+        await conn.execute(`DELETE FROM plan_benefits WHERE plan_id = ?`, [req.params.id]);
+        for (let i = 0; i < req.body.benefits.length; i++) {
+          const b = req.body.benefits[i];
           await conn.execute(
-            `INSERT INTO tier_tests (id, tier_id, test_name, original_price, discounted_price, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [uuidv4(), req.params.id, t.test_name, t.original_price, t.discounted_price, i + 1]
+            `INSERT INTO plan_benefits (id, plan_id, benefit_code, name, description, num_coupons, discount_type, discount_value, conditions, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(), req.params.id,
+              String(b.benefit_code || 'XX').toUpperCase().slice(0, 4),
+              b.name, b.description || null,
+              Number(b.num_coupons) || 1,
+              b.discount_type || 'percent',
+              b.discount_value ?? null,
+              b.conditions || null,
+              i + 1,
+            ]
           );
         }
       }
-
       await conn.commit();
       res.json({ ok: true });
-    } catch (err) {
-      await conn.rollback().catch(() => {});
-      next(err);
-    } finally {
-      conn.release();
-    }
+    } catch (e) { await conn.rollback().catch(() => {}); next(e); }
+    finally { conn.release(); }
   }
 );
 
-// ---------- activation codes ----------
-router.get('/activation-codes', async (req, res, next) => {
+// ============ CARD BATCHES ============
+router.get('/cards', async (req, res, next) => {
   try {
-    const filters = [];
-    const params = [];
-    if (req.query.tier_id) { filters.push('ac.tier_id = ?'); params.push(req.query.tier_id); }
-    if (req.query.agent_id) { filters.push('ac.assigned_agent_id = ?'); params.push(req.query.agent_id); }
-    if (req.query.status === 'used')   filters.push('ac.is_used = 1');
-    if (req.query.status === 'unused') filters.push('ac.is_used = 0');
+    const filters = [], params = [];
+    if (req.query.plan_id)        { filters.push('c.plan_id = ?');                 params.push(req.query.plan_id); }
+    if (req.query.salesperson_id) { filters.push('c.assigned_to_salesperson = ?'); params.push(req.query.salesperson_id); }
+    if (req.query.status)         { filters.push('c.status = ?');                  params.push(req.query.status); }
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-
     const [rows] = await pool.execute(
-      `SELECT ac.id, ac.code, ac.tier_id, t.name AS tier_name,
-              ac.assigned_agent_id, a.full_name AS agent_name, a.phone AS agent_phone,
-              ac.is_used, ac.used_at, ac.used_by_agent_id, ac.created_at
-         FROM activation_codes ac
-         JOIN booklet_tiers t ON t.id = ac.tier_id
-    LEFT JOIN users a ON a.id = ac.assigned_agent_id
+      `SELECT c.id, c.card_number, c.status, c.activated_at, c.expires_at, c.amount_paid,
+              p.name AS plan_name,
+              sp.full_name AS salesperson_name, sp.phone AS salesperson_phone,
+              cu.full_name AS customer_name, cu.phone AS customer_phone
+         FROM cards c
+         JOIN plans p ON p.id = c.plan_id
+    LEFT JOIN users sp ON sp.id = c.assigned_to_salesperson
+    LEFT JOIN users cu ON cu.id = c.customer_id
          ${where}
-        ORDER BY ac.created_at DESC
-        LIMIT 5000`,
+        ORDER BY c.created_at DESC LIMIT 5000`,
       params
     );
-
-    if (req.query.format === 'csv') return sendCSV(res, 'activation_codes', rows);
-    res.json({ codes: rows });
-  } catch (err) { next(err); }
+    if (req.query.format === 'csv') return sendCSV(res, 'cards', rows);
+    res.json({ cards: rows });
+  } catch (e) { next(e); }
 });
 
 router.post(
-  '/activation-codes',
-  body('tier_id').isString().notEmpty(),
+  '/cards/batch',
+  body('plan_id').isString().notEmpty(),
   body('count').isInt({ min: 1, max: 1000 }),
-  body('agent_id').optional({ nullable: true }).isString(),
+  body('assign_to_salesperson_id').optional({ nullable: true }).isString(),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
-
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
+      const [plan] = await conn.execute(`SELECT id FROM plans WHERE id = ? LIMIT 1`, [req.body.plan_id]);
+      if (plan.length === 0) { await conn.rollback(); return res.status(400).json({ error: 'plan_not_found' }); }
 
-      const [tier] = await conn.execute('SELECT id FROM booklet_tiers WHERE id = ? LIMIT 1', [req.body.tier_id]);
-      if (tier.length === 0) {
-        await conn.rollback();
-        return res.status(400).json({ error: 'tier_not_found' });
-      }
-      if (req.body.agent_id) {
-        const [agent] = await conn.execute(
-          `SELECT id FROM users WHERE id = ? AND role = 'sales_agent' AND is_active = 1 LIMIT 1`,
-          [req.body.agent_id]
+      if (req.body.assign_to_salesperson_id) {
+        const [sp] = await conn.execute(
+          `SELECT id FROM users WHERE id = ? AND role = 'salesperson' AND is_active = 1 LIMIT 1`,
+          [req.body.assign_to_salesperson_id]
         );
-        if (agent.length === 0) {
-          await conn.rollback();
-          return res.status(400).json({ error: 'agent_not_found' });
-        }
+        if (sp.length === 0) { await conn.rollback(); return res.status(400).json({ error: 'salesperson_not_found' }); }
       }
 
+      const seqs = await allocateCardSequences(conn, req.body.count);
       const created = [];
-      for (let i = 0; i < req.body.count; i++) {
-        let inserted = false;
-        let attempts = 0;
-        while (!inserted && attempts < 5) {
-          attempts++;
-          const code = activationCode();
-          try {
-            const id = uuidv4();
-            await conn.execute(
-              `INSERT INTO activation_codes
-                  (id, code, tier_id, assigned_agent_id, is_used, created_by_admin_id, created_at)
-               VALUES (?, ?, ?, ?, 0, ?, NOW())`,
-              [id, code, req.body.tier_id, req.body.agent_id || null, req.user.id]
-            );
-            created.push({ id, code });
-            inserted = true;
-          } catch (err) {
-            if (err.code !== 'ER_DUP_ENTRY') throw err;
-          }
-        }
-        if (!inserted) throw new Error('activation_code_collision');
+      for (const s of seqs) {
+        const id = uuidv4();
+        await conn.execute(
+          `INSERT INTO cards (id, card_number, card_seq, plan_id, status, assigned_to_salesperson, created_by_admin, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            id, s.number, s.seq, req.body.plan_id,
+            req.body.assign_to_salesperson_id ? 'assigned' : 'unused',
+            req.body.assign_to_salesperson_id || null,
+            req.user.id,
+          ]
+        );
+        created.push({ id, card_number: s.number });
       }
-
       await conn.commit();
       res.status(201).json({ created });
-    } catch (err) {
-      await conn.rollback().catch(() => {});
-      next(err);
-    } finally {
-      conn.release();
-    }
+    } catch (e) { await conn.rollback().catch(() => {}); next(e); }
+    finally { conn.release(); }
   }
 );
 
-// ---------- users ----------
-router.get('/users', async (req, res, next) => {
+router.put('/cards/:id/assign', body('salesperson_id').isString().notEmpty(), async (req, res, next) => {
   try {
-    const filters = [];
-    const params = [];
-    if (req.query.role) { filters.push('role = ?'); params.push(req.query.role); }
-    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    const [rows] = await pool.execute(
-      `SELECT id, phone, full_name, email, role, is_active, created_at, last_login
-         FROM users ${where}
-        ORDER BY created_at DESC LIMIT 2000`,
-      params
+    const [sp] = await pool.execute(
+      `SELECT id FROM users WHERE id = ? AND role = 'salesperson' AND is_active = 1 LIMIT 1`,
+      [req.body.salesperson_id]
     );
-    res.json({ users: rows });
-  } catch (err) { next(err); }
+    if (sp.length === 0) return res.status(400).json({ error: 'salesperson_not_found' });
+    const [r] = await pool.execute(
+      `UPDATE cards SET assigned_to_salesperson = ?, status = IF(status = 'unused','assigned',status)
+        WHERE id = ? AND status IN ('unused','assigned')`,
+      [req.body.salesperson_id, req.params.id]
+    );
+    if (r.affectedRows === 0) return res.status(409).json({ error: 'card_not_assignable' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ============ RECEPTION (admin password gated) ============
+router.get('/reception/lookup/:code', requireAdminPassword, async (req, res, next) => {
+  try {
+    const code = String(req.params.code || '').trim().toUpperCase();
+    const [rows] = await pool.execute(
+      `SELECT cp.id, cp.coupon_code, cp.benefit_name, cp.benefit_code, cp.status, cp.used_at, cp.expires_at,
+              cd.card_number, cd.id AS card_id,
+              u.full_name AS member_name, u.phone AS member_phone,
+              p.name AS plan_name,
+              a.full_name AS used_by_admin_name
+         FROM coupons cp
+         JOIN cards cd ON cd.id = cp.card_id
+         JOIN users u  ON u.id  = cp.customer_id
+         JOIN plans p  ON p.id  = cd.plan_id
+    LEFT JOIN users a  ON a.id  = cp.used_by_admin
+        WHERE cp.coupon_code = ? LIMIT 1`,
+      [code]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'coupon_not_found' });
+    const c = rows[0];
+    if (c.status === 'unused' && new Date(c.expires_at) < new Date()) {
+      await pool.execute(`UPDATE coupons SET status = 'expired' WHERE id = ?`, [c.id]);
+      c.status = 'expired';
+    }
+    res.json({ coupon: c });
+  } catch (e) { next(e); }
+});
+
+router.post('/reception/avail/:code', requireAdminPassword, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const code = String(req.params.code || '').trim().toUpperCase();
+    const [rows] = await conn.execute(
+      `SELECT id, customer_id, benefit_name, status, expires_at FROM coupons WHERE coupon_code = ? LIMIT 1 FOR UPDATE`,
+      [code]
+    );
+    if (rows.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'coupon_not_found' }); }
+    const cp = rows[0];
+    if (cp.status === 'used')    { await conn.rollback(); return res.status(409).json({ error: 'coupon_already_used' }); }
+    if (cp.status === 'expired' || new Date(cp.expires_at) < new Date()) {
+      await conn.execute(`UPDATE coupons SET status = 'expired' WHERE id = ?`, [cp.id]);
+      await conn.commit();
+      return res.status(409).json({ error: 'coupon_expired' });
+    }
+    const usedAt = new Date();
+    await conn.execute(
+      `UPDATE coupons SET status = 'used', used_at = ?, used_by_admin = ? WHERE id = ?`,
+      [usedAt, req.user.id, cp.id]
+    );
+    await conn.commit();
+
+    socket.emitToClient(cp.customer_id, 'coupon:used', {
+      coupon_id: cp.id, coupon_code: code, used_at: usedAt, benefit_name: cp.benefit_name,
+    });
+
+    res.json({ ok: true, coupon_code: code, used_at: usedAt, benefit_name: cp.benefit_name });
+  } catch (e) { await conn.rollback().catch(() => {}); next(e); }
+  finally { conn.release(); }
+});
+
+// ============ OFFERS ============
+router.get('/offers', async (_req, res, next) => {
+  try {
+    const [rows] = await pool.execute(`SELECT * FROM offers ORDER BY sort_order ASC, created_at DESC`);
+    res.json({ offers: rows });
+  } catch (e) { next(e); }
 });
 
 router.post(
-  '/users',
-  body('phone').isString().notEmpty(),
-  body('role').isIn(['sales_agent', 'receptionist', 'admin']),
-  body('full_name').isString().isLength({ min: 2 }),
-  body('email').optional({ nullable: true }).isEmail(),
+  '/offers',
+  body('title').isString().notEmpty(),
+  body('image_url').optional().isString(),
+  body('link_url').optional({ nullable: true }).isString(),
+  body('subtitle').optional({ nullable: true }).isString(),
   async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return bail(res, errors);
-
     try {
-      const digits = String(req.body.phone).replace(/\D/g, '');
-      let phone = req.body.phone;
-      if (digits.length === 10) phone = `+91${digits}`;
-      else if (digits.length === 12 && digits.startsWith('91')) phone = `+${digits}`;
-      else return res.status(400).json({ error: 'invalid_phone' });
-
-      const [exists] = await pool.execute('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
-      if (exists.length > 0) return res.status(409).json({ error: 'phone_already_registered' });
-
       const id = uuidv4();
       await pool.execute(
-        `INSERT INTO users (id, phone, full_name, email, role, is_active, created_at)
-         VALUES (?, ?, ?, ?, ?, 1, NOW())`,
-        [id, phone, req.body.full_name, req.body.email || null, req.body.role]
+        `INSERT INTO offers (id, title, subtitle, image_url, link_url, is_active, sort_order, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?, NOW())`,
+        [id, req.body.title, req.body.subtitle || null, req.body.image_url || null,
+         req.body.link_url || null, Number(req.body.sort_order || 0), req.user.id]
       );
-      res.status(201).json({ id, phone, role: req.body.role });
-    } catch (err) { next(err); }
+      res.status(201).json({ id });
+    } catch (e) { next(e); }
   }
 );
 
-router.put('/users/:id/toggle', async (req, res, next) => {
+router.put('/offers/:id', async (req, res, next) => {
   try {
-    const [rows] = await pool.execute('SELECT id, is_active FROM users WHERE id = ? LIMIT 1', [req.params.id]);
-    if (rows.length === 0) return res.status(404).json({ error: 'user_not_found' });
-    const next_state = rows[0].is_active ? 0 : 1;
-    await pool.execute('UPDATE users SET is_active = ? WHERE id = ?', [next_state, req.params.id]);
-    res.json({ ok: true, is_active: Boolean(next_state) });
-  } catch (err) { next(err); }
+    const fields = ['title','subtitle','image_url','link_url','is_active','sort_order'];
+    const sets = [], params = [];
+    for (const f of fields) {
+      if (Object.prototype.hasOwnProperty.call(req.body, f)) {
+        sets.push(`${f} = ?`); params.push(typeof req.body[f] === 'boolean' ? (req.body[f] ? 1 : 0) : req.body[f]);
+      }
+    }
+    if (sets.length === 0) return res.status(400).json({ error: 'nothing_to_update' });
+    params.push(req.params.id);
+    await pool.execute(`UPDATE offers SET ${sets.join(', ')} WHERE id = ?`, params);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
 });
 
-// ---------- reports ----------
-router.get(
-  '/reports/sales',
-  query('from').optional().isISO8601(),
-  query('to').optional().isISO8601(),
-  async (req, res, next) => {
-    try {
-      const filters = [];
-      const params = [];
-      if (req.query.from) { filters.push('b.activated_at >= ?'); params.push(req.query.from); }
-      if (req.query.to)   { filters.push('b.activated_at <= ?'); params.push(req.query.to); }
-      if (req.query.agent_id) { filters.push('b.sold_by_agent_id = ?'); params.push(req.query.agent_id); }
-      if (req.query.tier_id)  { filters.push('b.tier_id = ?');           params.push(req.query.tier_id); }
-      const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+router.delete('/offers/:id', async (req, res, next) => {
+  try { await pool.execute(`DELETE FROM offers WHERE id = ?`, [req.params.id]); res.json({ ok: true }); }
+  catch (e) { next(e); }
+});
 
-      const [rows] = await pool.execute(
-        `SELECT b.id AS booklet_id, b.activated_at, b.expires_at, b.amount_paid,
-                b.activation_code_used, b.status,
-                t.name AS tier_name,
-                u.full_name AS client_name, u.phone AS client_phone,
-                a.full_name AS agent_name, a.phone AS agent_phone
-           FROM booklets b
-           JOIN booklet_tiers t ON t.id = b.tier_id
-           JOIN users u ON u.id = b.client_id
-           JOIN users a ON a.id = b.sold_by_agent_id
-           ${where}
-          ORDER BY b.activated_at DESC LIMIT 10000`,
-        params
-      );
-
-      if (req.query.format === 'csv') return sendCSV(res, 'sales_report', rows);
-      res.json({ rows });
-    } catch (err) { next(err); }
-  }
-);
+// ============ REPORTS ============
+router.get('/reports/sales', async (req, res, next) => {
+  try {
+    const filters = [], params = [];
+    if (req.query.from)            { filters.push('c.activated_at >= ?');           params.push(req.query.from); }
+    if (req.query.to)              { filters.push('c.activated_at <= ?');           params.push(req.query.to); }
+    if (req.query.salesperson_id)  { filters.push('c.activated_by_salesperson = ?'); params.push(req.query.salesperson_id); }
+    if (req.query.plan_id)         { filters.push('c.plan_id = ?');                  params.push(req.query.plan_id); }
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : `WHERE 1=1`;
+    const [rows] = await pool.execute(
+      `SELECT c.card_number, c.activated_at, c.expires_at, c.amount_paid, c.status,
+              p.name AS plan_name, p.is_corporate, p.corporate_client_name,
+              cu.full_name AS customer_name, cu.phone AS customer_phone,
+              sp.full_name AS salesperson_name, sp.phone AS salesperson_phone
+         FROM cards c
+         JOIN plans p ON p.id = c.plan_id
+    LEFT JOIN users cu ON cu.id = c.customer_id
+    LEFT JOIN users sp ON sp.id = c.activated_by_salesperson
+         ${where} AND c.status IN ('active','expired')
+        ORDER BY c.activated_at DESC LIMIT 10000`,
+      params
+    );
+    if (req.query.format === 'csv') return sendCSV(res, 'sales_report', rows);
+    res.json({ rows });
+  } catch (e) { next(e); }
+});
 
 router.get('/reports/coupons', async (req, res, next) => {
   try {
-    const filters = [];
-    const params = [];
-    if (req.query.status) { filters.push('c.status = ?'); params.push(req.query.status); }
-    if (req.query.test)   { filters.push('c.test_name LIKE ?'); params.push(`%${req.query.test}%`); }
-    if (req.query.from)   { filters.push('c.created_at >= ?'); params.push(req.query.from); }
-    if (req.query.to)     { filters.push('c.created_at <= ?'); params.push(req.query.to); }
+    const filters = [], params = [];
+    if (req.query.status)       { filters.push('cp.status = ?');       params.push(req.query.status); }
+    if (req.query.benefit_code) { filters.push('cp.benefit_code = ?'); params.push(req.query.benefit_code); }
+    if (req.query.from)         { filters.push('cp.created_at >= ?');  params.push(req.query.from); }
+    if (req.query.to)           { filters.push('cp.created_at <= ?');  params.push(req.query.to); }
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-
     const [rows] = await pool.execute(
-      `SELECT c.coupon_code, c.test_name, c.original_price, c.discounted_price, c.discount_percent,
-              c.status, c.availed_at, c.expires_at, c.created_at,
-              u.full_name AS client_name, u.phone AS client_phone,
-              r.full_name AS availed_by_name
-         FROM coupons c
-         JOIN users u ON u.id = c.client_id
-    LEFT JOIN users r ON r.id = c.availed_by_receptionist_id
+      `SELECT cp.coupon_code, cp.benefit_code, cp.benefit_name, cp.status, cp.used_at, cp.expires_at, cp.created_at,
+              cd.card_number, cu.full_name AS customer_name, cu.phone AS customer_phone
+         FROM coupons cp
+         JOIN cards cd ON cd.id = cp.card_id
+         JOIN users cu ON cu.id = cp.customer_id
          ${where}
-        ORDER BY c.created_at DESC LIMIT 10000`,
+        ORDER BY cp.created_at DESC LIMIT 10000`,
       params
     );
     if (req.query.format === 'csv') return sendCSV(res, 'coupons_report', rows);
     res.json({ rows });
-  } catch (err) { next(err); }
+  } catch (e) { next(e); }
 });
+
+// Re-prove the admin password (used by the web panel to mount the reception view).
+router.post('/verify-password', body('password').isString(), async (req, res, next) => {
+  try {
+    const [rows] = await pool.execute('SELECT password_hash FROM users WHERE id = ? LIMIT 1', [req.user.id]);
+    if (rows.length === 0) return res.status(401).json({ ok: false });
+    const ok = await verifyPassword(req.body.password, rows[0].password_hash);
+    res.json({ ok });
+  } catch (e) { next(e); }
+});
+
+// Change admin password.
+router.post('/change-password',
+  body('current_password').isString(),
+  body('new_password').isString().isLength({ min: 6 }),
+  async (req, res, next) => {
+    try {
+      const [rows] = await pool.execute('SELECT password_hash FROM users WHERE id = ? LIMIT 1', [req.user.id]);
+      const ok = await verifyPassword(req.body.current_password, rows[0].password_hash);
+      if (!ok) return res.status(401).json({ error: 'invalid_current_password' });
+      await pool.execute('UPDATE users SET password_hash = ? WHERE id = ?', [await hashPassword(req.body.new_password), req.user.id]);
+      res.json({ ok: true });
+    } catch (e) { next(e); }
+  }
+);
 
 module.exports = router;

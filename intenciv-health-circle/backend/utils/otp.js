@@ -3,22 +3,22 @@
  */
 
 async function sendOTP(phone, otp) {
-  const mobile = phone.replace('+', '');
+  const mobile  = phone.replace('+', '');
   const message = `Your IntenCiv Health OTP is ${otp}. Valid for 10 minutes. Do not share with anyone. -IntenCiv`;
 
   const params = new URLSearchParams({
     authkey:      process.env.AUTHKEY_API_KEY,
     mobile:       mobile,
     country_code: '91',
-    sid:          process.env.AUTHKEY_SENDER_ID,
+    sid:          process.env.AUTHKEY_WELCOME_SID,
     msg:          message,
   });
 
-  if (process.env.AUTHKEY_TEMPLATE_ID) {
-    params.append('template_id', process.env.AUTHKEY_TEMPLATE_ID);
+  if (process.env.AUTHKEY_TEMPLATE_SID) {
+    params.append('template_id', process.env.AUTHKEY_TEMPLATE_SID);
   }
 
-  const res = await fetch(`https://api.authkey.io/request?${params.toString()}`);
+  const res  = await fetch(`https://api.authkey.io/request?${params.toString()}`);
   const data = await res.json();
 
   if (data.type === 'error') {

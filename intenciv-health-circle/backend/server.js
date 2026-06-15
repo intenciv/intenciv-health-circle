@@ -23,6 +23,7 @@ const authRouter        = require('./routes/auth');
 const salespersonRouter = require('./routes/salesperson');
 const customerRouter    = require('./routes/customer');
 const adminRouter       = require('./routes/admin');
+const receptionRouter   = require('./routes/reception');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -50,6 +51,7 @@ app.use('/auth',        authRouter);
 app.use('/salesperson', salespersonRouter);
 app.use('/customer',    customerRouter);
 app.use('/admin',       adminRouter);
+app.use('/reception',   receptionRouter);
 
 app.use(notFound);
 app.use(errorHandler);

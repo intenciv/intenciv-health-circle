@@ -106,22 +106,24 @@ router.post(
         return res.status(409).json({ error: 'card_not_activatable' });
       }
 
-      // AuthKey template uses a 6-digit OTP placeholder ({#2fa#}).
-      const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      const gw = await authkey.sendOtp({ phone });
+      if (!gw || !gw.LogID) {
+        return res.status(502).json({ error: 'otp_gateway_failed', details: gw });
+      }
 
       await pool.execute(
         `UPDATE otp_log SET is_verified = 1 WHERE phone = ? AND is_verified = 0`,
         [phone]
       );
       await pool.execute(
-        `INSERT INTO otp_log (id, phone, otp_hash, purpose, expires_at)
-         VALUES (?, ?, ?, 'activation', ?)`,
-        [uuidv4(), phone, sha256(otp), expiresAt]
+        `INSERT INTO otp_log (id, phone, otp_hash, log_id, purpose, expires_at)
+         VALUES (?, ?, ?, ?, 'activation', ?)`,
+        [uuidv4(), phone, '', gw.LogID, expiresAt]
       );
 
-      const gw = await authkey.sendOtp({ phone, otp }).catch(err => ({ gateway_error: true, message: err.message }));
-      res.json({ ok: true, gateway: gw, expires_in_seconds: 600 });
+      res.json({ ok: true, expires_in_seconds: 600 });
     } catch (e) { next(e); }
   }
 );
@@ -131,7 +133,7 @@ router.post(
   '/activation/verify-otp',
   body('card_id').isString().notEmpty(),
   body('customer_phone').isString().notEmpty(),
-  body('otp').isString().isLength({ min: 6, max: 6 }),
+  body('otp').isString().isLength({ min: 4, max: 8 }),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
@@ -143,7 +145,7 @@ router.post(
       if (!phone) { await conn.rollback(); return res.status(400).json({ error: 'invalid_phone' }); }
 
       const [rows] = await conn.execute(
-        `SELECT id, otp_hash, attempts FROM otp_log
+        `SELECT id, log_id, attempts FROM otp_log
           WHERE phone = ? AND is_verified = 0 AND expires_at > NOW()
           ORDER BY created_at DESC LIMIT 1`,
         [phone]
@@ -155,7 +157,9 @@ router.post(
         await conn.commit();
         return res.status(400).json({ error: 'otp_attempts_exhausted' });
       }
-      if (sha256(req.body.otp) !== otpRow.otp_hash) {
+
+      const verifyResult = await authkey.verifyOtp({ otp: req.body.otp, logId: otpRow.log_id });
+      if (!verifyResult || verifyResult.status !== true) {
         const next = otpRow.attempts + 1;
         await conn.execute(
           `UPDATE otp_log SET attempts = ?, is_verified = ? WHERE id = ?`,
@@ -164,6 +168,7 @@ router.post(
         await conn.commit();
         return res.status(400).json({ error: 'otp_incorrect', attempts_left: Math.max(0, 3 - next) });
       }
+
       await conn.execute('UPDATE otp_log SET is_verified = 1 WHERE id = ?', [otpRow.id]);
       await conn.commit();
 

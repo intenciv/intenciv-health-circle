@@ -1,30 +1,30 @@
-import { Text, View, StyleSheet, Image } from "react-native";
-
-const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { useEffect } from "react";
+import { useRouter } from "expo-router";
+import { View, ActivityIndicator } from "react-native";
+import * as SecureStore from "expo-secure-store";
 
 export default function Index() {
-  console.log(EXPO_PUBLIC_BACKEND_URL, "EXPO_PUBLIC_BACKEND_URL");
+  const router = useRouter();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await SecureStore.getItemAsync("access_token");
+        const user = await SecureStore.getItemAsync("user");
+        if (token && user) {
+          router.replace("/(tabs)/home");
+        } else {
+          router.replace("/login");
+        }
+      } catch {
+        router.replace("/login");
+      }
+    })();
+  }, []);
 
   return (
-    <View style={styles.container}>
-      <Image
-        source={require("../assets/images/app-image.png")}
-        style={styles.image}
-      />
+    <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0A5C9B" }}>
+      <ActivityIndicator color="#fff" size="large" />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0c0c0c",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "contain",
-  },
-});

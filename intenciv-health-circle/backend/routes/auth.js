@@ -53,7 +53,30 @@ router.post(
     } catch (e) { next(e); }
   }
 );
+// ---------- RECEPTION ----------
+router.post(
+  '/reception/login',
+  body('email').isEmail(),
+  body('password').isString().isLength({ min: 6 }),
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return bail(res, errors);
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, role, email, full_name, password_hash, is_active
+           FROM users WHERE email = ? AND role = 'reception' LIMIT 1`,
+        [req.body.email.toLowerCase().trim()]
+      );
+      if (rows.length === 0 || !rows[0].is_active) return res.status(401).json({ error: 'invalid_credentials' });
+      const ok = await verifyPassword(req.body.password, rows[0].password_hash);
+      if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
+      await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
+      const { password_hash, ...user } = rows[0];
+      res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
+    } catch (e) { next(e); }
+  }
+);
 // ---------- SALESPERSON ----------
 router.post(
   '/salesperson/login',

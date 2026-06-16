@@ -17,7 +17,9 @@ export default function ReceptionLogin() {
       tokens.setSession(data);
       navigate('/reception/desk', { replace: true });
     } catch (e) {
-      setError(e.response?.data?.error === 'invalid_credentials' ? 'Invalid email or password.' : 'Login failed.');
+      setError(e.response?.data?.error === 'invalid_credentials'
+        ? 'Invalid email or password.'
+        : 'Login failed.');
     } finally { setLoading(false); }
   }
 
@@ -25,27 +27,50 @@ export default function ReceptionLogin() {
     <div className="center-page">
       <form onSubmit={submit} className="login-card">
 
-        {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+        {/* Company Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <img
-            src="/favicon.png"
+            src="/logo.png"
             alt="IntenCiv"
-            style={{ width: 200, height: 'auto', display: 'inline-block' }}
+            style={{
+              width: 180,
+              height: 'auto',
+              display: 'inline-block',
+              objectFit: 'contain'
+            }}
           />
         </div>
 
         <h1>IntenCiv Reception</h1>
         <p className="subtitle">Coupon lookup &amp; availing desk.</p>
+
         {error && <div className="error-banner">{error}</div>}
+
         <label className="label">Email</label>
-        <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="contact@intenciv.in" autoFocus />
+        <input
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          type="email"
+          placeholder="contact@intenciv.in"
+          autoFocus
+        />
+
         <div style={{ height: 12 }} />
+
         <label className="label">Password</label>
-        <input value={password} onChange={e => setPassword(e.target.value)} type="password" placeholder="••••••" />
+        <input
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          type="password"
+          placeholder="••••••"
+        />
+
         <div style={{ height: 16 }} />
+
         <button type="submit" disabled={loading} style={{ width: '100%', height: 48 }}>
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
+
       </form>
     </div>
   );

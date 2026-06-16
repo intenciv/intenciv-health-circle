@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, tokens } from '../services/api';
+import logo from '../../../frontend/assets/favicon.png';
 
 export default function ReceptionLogin() {
   const [email, setEmail]       = useState('');

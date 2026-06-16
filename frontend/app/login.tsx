@@ -6,13 +6,14 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { apiFetch } from "@/src/utils/api";
+import { saveAuth } from "@/src/utils/storage";
 
 export default function LoginScreen() {
   const router = useRouter();
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSendOTP() {
+  async function handleLogin() {
     const digits = phone.replace(/\D/g, "");
     if (digits.length !== 10) {
       Alert.alert("Invalid Number", "Please enter a valid 10-digit mobile number.");
@@ -20,19 +21,25 @@ export default function LoginScreen() {
     }
     setLoading(true);
     try {
-      await apiFetch("/auth/customer/send-otp", {
+      const data = await apiFetch("/auth/customer/login", {
         method: "POST",
         body: JSON.stringify({ phone: `+91${digits}` }),
       });
-      router.push({ pathname: "/otp", params: { phone: `+91${digits}` } });
+      await saveAuth(data.access_token, data.refresh_token, data.user);
+      router.replace("/(tabs)/home");
     } catch (err: any) {
       if (err.error === "mobile_not_registered") {
         Alert.alert(
           "Not Registered",
           "This number is not linked to any membership.\nPlease contact your IntenCiv sales representative."
         );
+      } else if (err.error === "no_active_membership") {
+        Alert.alert(
+          "No Active Membership",
+          "No active membership found for this number."
+        );
       } else {
-        Alert.alert("Error", "Could not send OTP. Please try again.");
+        Alert.alert("Error", "Login failed. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -73,12 +80,12 @@ export default function LoginScreen() {
 
           <TouchableOpacity
             style={[styles.btn, loading && styles.btnDisabled]}
-            onPress={handleSendOTP}
+            onPress={handleLogin}
             disabled={loading}
           >
             {loading
               ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.btnText}>Send OTP</Text>
+              : <Text style={styles.btnText}>Continue</Text>
             }
           </TouchableOpacity>
 

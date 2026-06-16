@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, tokens } from '../services/api';
-import logo from '../../../frontend/assets/favicon.png';
 
 export default function AdminLogin() {
   const [email, setEmail]     = useState('');
@@ -25,6 +24,16 @@ export default function AdminLogin() {
   return (
     <div className="center-page">
       <form onSubmit={submit} className="login-card">
+
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+          <img
+            src="/favicon.png"
+            alt="IntenCiv"
+            style={{ width: 200, height: 'auto', display: 'inline-block' }}
+          />
+        </div>
+
         <h1>IntenCiv Admin</h1>
         <p className="subtitle">Operations dashboard — tiers, codes, agents, reports.</p>
         {error && <div className="error-banner">{error}</div>}

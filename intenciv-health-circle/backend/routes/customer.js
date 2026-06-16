@@ -49,11 +49,11 @@ router.get('/me', async (req, res, next) => {
         phone: card.member_phone,
       },
       card: {
-        id:           card.id,
-        number:       card.card_number,
-        status:       card.status,
-        activated_at: card.activated_at,
-        expires_at:   card.expires_at,
+        id:             card.id,
+        number:         card.card_number,
+        status:         card.status,
+        activated_at:   card.activated_at,
+        expires_at:     card.expires_at,
         days_remaining: daysRemaining,
       },
       plan: {
@@ -96,14 +96,60 @@ router.get('/coupons', async (req, res, next) => {
          FROM plan_benefits WHERE plan_id = ? ORDER BY sort_order ASC`,
       [card.plan_id]
     );
+
+    // ── fetch coupons with max_uses + current_uses ──────────────────────────
     const [coupons] = await pool.execute(
-      `SELECT id, coupon_code, benefit_id, status, used_at, expires_at
-         FROM coupons WHERE card_id = ? ORDER BY coupon_code ASC`,
+      `SELECT id, coupon_code, benefit_id, status,
+              max_uses, current_uses,
+              used_at, expires_at
+         FROM coupons
+        WHERE card_id = ?
+        ORDER BY coupon_code ASC`,
       [card.id]
     );
 
+    // ── fetch redemption history for ALL multi-use coupons in one query ─────
+    const multiIds = coupons
+      .filter(c => (c.max_uses ?? 1) > 1)
+      .map(c => c.id);
+
+    let redemptionsByCorouponId = {};
+    if (multiIds.length > 0) {
+      const placeholders = multiIds.map(() => '?').join(',');
+      const [redemptions] = await pool.execute(
+        `SELECT
+           cr.coupon_id,
+           cr.id,
+           cr.redeemed_at,
+           cr.service_note,
+           cr.status,
+           u.full_name AS redeemed_by_name
+         FROM coupon_redemptions cr
+    LEFT JOIN users u ON u.id = cr.redeemed_by
+        WHERE cr.coupon_id IN (${placeholders})
+        ORDER BY cr.redeemed_at DESC`,
+        multiIds
+      );
+      for (const r of redemptions) {
+        (redemptionsByCorouponId[r.coupon_id] ||= []).push(r);
+      }
+    }
+
+    // ── group coupons by benefit ────────────────────────────────────────────
     const byBenefit = {};
-    for (const c of coupons) (byBenefit[c.benefit_id] ||= []).push(c);
+    for (const c of coupons) {
+      const enriched = {
+        ...c,
+        max_uses:     c.max_uses     ?? 1,
+        current_uses: c.current_uses ?? 0,
+        remaining_uses: (c.max_uses ?? 1) - (c.current_uses ?? 0),
+        // only attach history for multi-use coupons
+        redemption_history: (c.max_uses ?? 1) > 1
+          ? (redemptionsByCorouponId[c.id] || [])
+          : undefined,
+      };
+      (byBenefit[c.benefit_id] ||= []).push(enriched);
+    }
 
     res.json({
       benefits: benefits.map(b => {
@@ -125,7 +171,10 @@ router.get('/coupons', async (req, res, next) => {
 router.get('/coupons/:code', async (req, res, next) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT c.id, c.coupon_code, c.status, c.used_at, c.expires_at,
+      `SELECT c.id, c.coupon_code, c.status,
+              c.max_uses, c.current_uses,
+              (c.max_uses - c.current_uses) AS remaining_uses,
+              c.used_at, c.expires_at,
               b.benefit_code, b.name AS benefit_name, b.description,
               b.discount_type, b.discount_value, b.conditions,
               ca.card_number, ca.expires_at AS card_expires_at
@@ -138,7 +187,28 @@ router.get('/coupons/:code', async (req, res, next) => {
     );
     if (rows.length === 0)
       return res.status(404).json({ error: 'coupon_not_found' });
-    res.json(rows[0]);
+
+    const coupon = rows[0];
+
+    // Attach redemption history if multi-use
+    if ((coupon.max_uses ?? 1) > 1) {
+      const [history] = await pool.execute(
+        `SELECT
+           cr.id,
+           cr.redeemed_at,
+           cr.service_note,
+           cr.status,
+           u.full_name AS redeemed_by_name
+         FROM coupon_redemptions cr
+    LEFT JOIN users u ON u.id = cr.redeemed_by
+        WHERE cr.coupon_id = ?
+        ORDER BY cr.redeemed_at DESC`,
+        [coupon.id]
+      );
+      coupon.redemption_history = history;
+    }
+
+    res.json(coupon);
   } catch (e) { next(e); }
 });
 

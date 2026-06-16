@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { tokens } from '../../services/api';
+import logo from '../../../../frontend/assets/favicon.png';
 
 const NAV = [
   { to: '/admin/dashboard',     label: 'Dashboard' },

@@ -33,7 +33,7 @@ export default function CouponsScreen() {
     try {
       const token = await getToken();
       const data = await apiFetch("/customer/coupons", {}, token || undefined);
-      setGroups(data.groups || []);
+      setGroups(data.benefits || []);  // ✅ fixed from data.groups
     } catch {
       // ignore
     } finally {

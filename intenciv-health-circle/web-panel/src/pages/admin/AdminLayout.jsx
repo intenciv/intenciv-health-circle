@@ -18,7 +18,7 @@ export default function AdminLayout() {
   return (
     <div className="shell">
       <aside className="sidebar">
-       <div className="brand">
+      <div className="brand">
   <img
     src="/favicon.png"
     alt="IntenCiv"

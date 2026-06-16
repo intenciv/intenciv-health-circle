@@ -19,7 +19,16 @@ export default function AdminLayout() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">IntenCiv Admin</div>
+       <div className="brand">
+  <img
+    src="/favicon.png"
+    alt="IntenCiv"
+    style={{ width: '100%', maxWidth: 160, height: 'auto', display: 'block' }}
+  />
+  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', marginTop: 4, display: 'block', letterSpacing: '0.08em' }}>
+    ADMIN PANEL
+  </span>
+</div>
         {NAV.map(n => (
           <NavLink key={n.to} to={n.to} className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
             {n.label}

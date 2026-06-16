@@ -2,23 +2,23 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, tokens } from '../services/api';
 
-export default function SalespersonLogin() {
-  const [phone, setPhone]     = useState('');
-  const [pin, setPin]         = useState('');
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
+export default function ReceptionLogin() {
+  const [email, setEmail]       = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
   const navigate = useNavigate();
 
   async function submit(e) {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
-      const { data } = await api.post('/auth/salesperson/login', { phone: phone.trim(), pin });
+      const { data } = await api.post('/auth/reception/login', { email: email.trim(), password });
       tokens.setSession(data);
-      navigate('/salesperson/dashboard', { replace: true });
+      navigate('/reception/desk', { replace: true });
     } catch (e) {
       setError(e.response?.data?.error === 'invalid_credentials'
-        ? 'Invalid phone or PIN.'
+        ? 'Invalid email or password.'
         : 'Login failed.');
     } finally { setLoading(false); }
   }
@@ -41,39 +41,33 @@ export default function SalespersonLogin() {
           />
         </div>
 
-        <h1>IntenCiv Sales</h1>
-        <p className="subtitle">Card activation for field agents.</p>
+        <h1>IntenCiv Reception</h1>
+        <p className="subtitle">Coupon lookup &amp; availing desk.</p>
 
         {error && <div className="error-banner">{error}</div>}
 
-        <label className="label">Mobile number</label>
+        <label className="label">Email</label>
         <input
-          value={phone}
-          onChange={e => setPhone(e.target.value)}
-          type="tel"
-          placeholder="9876543210"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          type="email"
+          placeholder="contact@intenciv.in"
           autoFocus
-          inputMode="numeric"
         />
 
         <div style={{ height: 12 }} />
 
-        <label className="label">PIN (4 digits)</label>
+        <label className="label">Password</label>
         <input
-          value={pin}
-          onChange={e => setPin(e.target.value.replace(/\D/g,'').slice(0,4))}
+          value={password}
+          onChange={e => setPassword(e.target.value)}
           type="password"
-          placeholder="••••"
-          inputMode="numeric"
+          placeholder="••••••"
         />
 
         <div style={{ height: 16 }} />
 
-        <button
-          type="submit"
-          disabled={loading || !phone || pin.length !== 4}
-          style={{ width: '100%', height: 48 }}
-        >
+        <button type="submit" disabled={loading} style={{ width: '100%', height: 48 }}>
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
 

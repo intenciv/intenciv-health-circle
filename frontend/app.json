@@ -13,13 +13,14 @@
       "bundleIdentifier": "in.intenciv.health"
     },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0A5C9B"
-      },
-      "package": "in.intenciv.health",
-      "edgeToEdgeEnabled": true
+    "adaptiveIcon": {
+      "foregroundImage": "./assets/adaptive-icon.png",
+      "backgroundColor": "#0A5C98"
     },
+    "package": "in.intenciv.health",
+    "edgeToEdgeEnabled": true,
+    "versionCode": 3
+},
     "web": {
       "bundler": "metro",
       "output": "single",

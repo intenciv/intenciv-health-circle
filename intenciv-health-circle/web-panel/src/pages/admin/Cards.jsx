@@ -2,15 +2,15 @@ import { useEffect, useState } from 'react';
 import { api, API_URL, tokens } from '../../services/api';
 
 export default function Cards() {
-  const [cards, setCards] = useState([]);
-  const [plans, setPlans] = useState([]);
-  const [sps, setSps]     = useState([]);
+  const [cards, setCards]   = useState([]);
+  const [plans, setPlans]   = useState([]);
+  const [sps, setSps]       = useState([]);
   const [filter, setFilter] = useState({ plan_id: '', salesperson_id: '', status: '' });
-  const [openBatch, setOpenBatch] = useState(false);
-  const [batch, setBatch] = useState({ plan_id: '', assign_to_salesperson_id: '', count: 50 });
+  const [openBatch, setOpenBatch]   = useState(false);
+  const [batch, setBatch]           = useState({ plan_id: '', assign_to_salesperson_id: '', count: 50 });
   const [openAssign, setOpenAssign] = useState(null);
-  const [assignSp, setAssignSp] = useState('');
-  const [err, setErr]   = useState('');
+  const [assignSp, setAssignSp]     = useState('');
+  const [err, setErr]     = useState('');
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -41,8 +41,10 @@ export default function Cards() {
   }
 
   async function assign() {
-    try { await api.put(`/admin/cards/${openAssign.id}/assign`, { salesperson_id: assignSp }); setOpenAssign(null); setAssignSp(''); load(); }
-    catch (e) { setErr(e.response?.data?.error || 'Assign failed'); }
+    try {
+      await api.put(`/admin/cards/${openAssign.id}/assign`, { salesperson_id: assignSp });
+      setOpenAssign(null); setAssignSp(''); load();
+    } catch (e) { setErr(e.response?.data?.error || 'Assign failed'); }
   }
 
   function exportCSV() {
@@ -54,18 +56,21 @@ export default function Cards() {
       .then(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cards.csv'; a.click(); });
   }
 
+  const statusColor = s => s === 'active' ? 'pill-active' : s === 'expired' ? 'pill-expired' : 'pill-cyan';
+
   return (
     <div className="col" style={{ gap: 18 }}>
       <div className="between">
         <h1>Cards</h1>
         <div className="row" style={{ gap: 10 }}>
           <button className="secondary" onClick={exportCSV}>Export CSV</button>
-          <button onClick={() => setOpenBatch(true)}>+ Generate batch</button>
+          <button onClick={() => setOpenBatch(true)}>+ Batch</button>
         </div>
       </div>
       {err && <div className="error-banner">{err}</div>}
 
-      <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+      {/* Filters */}
+      <div className="row filter-row" style={{ gap: 12, flexWrap: 'wrap' }}>
         <select value={filter.plan_id} onChange={e => setFilter({ ...filter, plan_id: e.target.value })} style={{ width: 220 }}>
           <option value="">All plans</option>
           {plans.map(p => <option key={p.id} value={p.id}>{p.name}{p.is_corporate ? ' (Corp)' : ''}</option>)}
@@ -83,8 +88,11 @@ export default function Cards() {
         </select>
       </div>
 
-      <table>
-        <thead><tr><th>Card #</th><th>Plan</th><th>Salesperson</th><th>Customer</th><th>Status</th><th>Activated</th><th>Expires</th><th>Amount</th><th></th></tr></thead>
+      {/* Desktop table */}
+      <table className="cards-table">
+        <thead>
+          <tr><th>Card #</th><th>Plan</th><th>Salesperson</th><th>Customer</th><th>Status</th><th>Activated</th><th>Expires</th><th>Amount</th><th></th></tr>
+        </thead>
         <tbody>
           {cards.map(c => (
             <tr key={c.id}>
@@ -92,21 +100,44 @@ export default function Cards() {
               <td>{c.plan_name}</td>
               <td>{c.salesperson_name || <span style={{ color: 'var(--text-mid)' }}>Unassigned</span>}</td>
               <td>{c.customer_name ? <>{c.customer_name}<br /><span style={{ color: 'var(--text-mid)', fontSize: 12 }} className="mono">{c.customer_phone}</span></> : '—'}</td>
-              <td><span className={`pill pill-${c.status === 'active' ? 'active' : c.status === 'expired' ? 'expired' : 'cyan'}`}>{c.status.toUpperCase()}</span></td>
+              <td><span className={`pill ${statusColor(c.status)}`}>{c.status.toUpperCase()}</span></td>
               <td>{c.activated_at ? new Date(c.activated_at).toLocaleDateString() : '—'}</td>
               <td>{c.expires_at ? new Date(c.expires_at).toLocaleDateString() : '—'}</td>
               <td>{c.amount_paid ? `₹${Number(c.amount_paid).toFixed(0)}` : '—'}</td>
-              <td>
-                {['unused', 'assigned'].includes(c.status) && (
-                  <button className="secondary" onClick={() => setOpenAssign(c)}>Assign</button>
-                )}
-              </td>
+              <td>{['unused', 'assigned'].includes(c.status) && <button className="secondary" onClick={() => setOpenAssign(c)}>Assign</button>}</td>
             </tr>
           ))}
           {cards.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-mid)' }}>No cards found.</td></tr>}
         </tbody>
       </table>
 
+      {/* Mobile card list */}
+      <div className="cards-list">
+        {cards.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-mid)' }}>No cards found.</p>}
+        {cards.map(c => (
+          <div key={c.id} className="c-card">
+            <div className="c-card-top">
+              <div>
+                <div className="c-card-num">{c.card_number}</div>
+                <div className="c-card-plan">{c.plan_name}</div>
+              </div>
+              <span className={`pill ${statusColor(c.status)}`}>{c.status.toUpperCase()}</span>
+            </div>
+            <div className="c-card-rows">
+              <div className="c-card-row"><span>Salesperson</span><span>{c.salesperson_name || 'Unassigned'}</span></div>
+              {c.customer_name && <div className="c-card-row"><span>Customer</span><span>{c.customer_name}<br /><span style={{ fontFamily: 'monospace', fontSize: 11 }}>{c.customer_phone}</span></span></div>}
+              {c.activated_at  && <div className="c-card-row"><span>Activated</span><span>{new Date(c.activated_at).toLocaleDateString()}</span></div>}
+              {c.expires_at    && <div className="c-card-row"><span>Expires</span><span>{new Date(c.expires_at).toLocaleDateString()}</span></div>}
+              {c.amount_paid   && <div className="c-card-row"><span>Amount</span><span>₹{Number(c.amount_paid).toFixed(0)}</span></div>}
+            </div>
+            {['unused', 'assigned'].includes(c.status) && (
+              <button className="secondary" onClick={() => setOpenAssign(c)} style={{ marginTop: 12, width: '100%' }}>Assign</button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Generate batch dialog */}
       {openBatch && (
         <div className="dialog-backdrop" onClick={() => setOpenBatch(false)}>
           <div className="dialog" onClick={e => e.stopPropagation()}>
@@ -132,6 +163,7 @@ export default function Cards() {
         </div>
       )}
 
+      {/* Assign dialog */}
       {openAssign && (
         <div className="dialog-backdrop" onClick={() => setOpenAssign(null)}>
           <div className="dialog" onClick={e => e.stopPropagation()}>

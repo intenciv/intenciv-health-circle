@@ -52,7 +52,10 @@ export default function Salespersons() {
       {/* ── Desktop table ── */}
       <table className="sp-table">
         <thead>
-          <tr><th>Name</th><th>Phone</th><th>Today</th><th>Week</th><th>Month</th><th>Total</th><th>Last login</th><th>Status</th><th></th></tr>
+          <tr>
+            <th>Name</th><th>Phone</th><th>Today</th><th>Week</th>
+            <th>Month</th><th>Total</th><th>Last login</th><th>Status</th><th></th>
+          </tr>
         </thead>
         <tbody>
           {list.map(s => (
@@ -64,7 +67,11 @@ export default function Salespersons() {
               <td>{s.month_count}</td>
               <td>{s.total_count}</td>
               <td>{s.last_login ? new Date(s.last_login).toLocaleString() : '—'}</td>
-              <td><span className={`pill ${s.is_active ? 'pill-active' : 'pill-expired'}`}>{s.is_active ? 'Active' : 'Disabled'}</span></td>
+              <td>
+                <span className={`pill ${s.is_active ? 'pill-active' : 'pill-expired'}`}>
+                  {s.is_active ? 'Active' : 'Disabled'}
+                </span>
+              </td>
               <td style={{ display: 'flex', gap: 6 }}>
                 <button className="secondary" onClick={() => setOpen({ ...s })}>Edit</button>
                 <button className="secondary" onClick={() => setPinOpen(s)}>Reset PIN</button>
@@ -104,7 +111,7 @@ export default function Salespersons() {
             </div>
 
             {s.last_login && (
-              <div style={{ fontSize: 12, color: 'var(--text-mid)', marginBottom: 4 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-mid)', marginBottom: 8 }}>
                 Last login: {new Date(s.last_login).toLocaleString()}
               </div>
             )}

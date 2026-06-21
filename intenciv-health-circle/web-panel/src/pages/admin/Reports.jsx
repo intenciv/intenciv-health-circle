@@ -52,7 +52,7 @@ export default function Reports() {
         <button className={tab === 'coupons' ? '' : 'secondary'} onClick={() => { setTab('coupons'); setRows([]); }}>Coupons</button>
       </div>
 
-      <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+      <div className="row reports-filters" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div><label className="label">From</label><input type="date" value={filter.from} onChange={e => setFilter({ ...filter, from: e.target.value })} /></div>
         <div><label className="label">To</label>  <input type="date" value={filter.to}   onChange={e => setFilter({ ...filter, to: e.target.value })} /></div>
         {tab === 'sales' && (

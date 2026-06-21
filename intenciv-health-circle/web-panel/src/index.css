@@ -252,3 +252,68 @@ tr:last-child td { border-bottom: none; }
   .grid-3 { grid-template-columns: repeat(1, minmax(0,1fr)); }
   .grid-2 { grid-template-columns: repeat(1, minmax(0,1fr)); }
 }
+/* ── Cards page filters ── */
+@media (max-width: 768px) {
+  .filter-row {
+    flex-direction: column;
+  }
+  .filter-row select {
+    width: 100% !important;
+  }
+
+  /* ── Cards table → mobile cards ── */
+  .cards-table { display: none; }
+  .cards-list  { display: flex; flex-direction: column; gap: 12px; }
+
+  .c-card {
+    background: var(--white);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: var(--shadow-card);
+  }
+  .c-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .c-card-num  { font-family: monospace; font-weight: 700; color: var(--deep-navy); font-size: 15px; }
+  .c-card-plan { font-size: 13px; color: var(--text-mid); margin-top: 2px; }
+  .c-card-rows { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .c-card-row  { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--surface-blue); }
+  .c-card-row:last-child { border-bottom: none; }
+  .c-card-row span:first-child { color: var(--text-mid); }
+  .c-card-row span:last-child  { font-weight: 600; text-align: right; }
+
+  /* ── Dashboard top salespersons table → cards ── */
+  .sp-mini-table { display: none; }
+  .sp-mini-list  { display: flex; flex-direction: column; gap: 10px; }
+  .sp-mini-card  {
+    background: var(--white);
+    border-radius: 10px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow-card);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sp-mini-name  { font-weight: 700; color: var(--deep-navy); font-size: 15px; }
+  .sp-mini-phone { font-size: 12px; color: var(--text-mid); font-family: monospace; margin-top: 2px; }
+  .sp-mini-stats { text-align: right; }
+  .sp-mini-rev   { font-weight: 700; color: var(--deep-navy); font-size: 16px; }
+  .sp-mini-cards { font-size: 12px; color: var(--text-mid); margin-top: 2px; }
+
+  /* ── Reports filter row ── */
+  .reports-filters {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+  .reports-filters > div { width: 100% !important; min-width: unset !important; }
+  .reports-filters > div input,
+  .reports-filters > div select { width: 100%; }
+}
+
+@media (min-width: 769px) {
+  .cards-list   { display: none; }
+  .sp-mini-list { display: none; }
+}

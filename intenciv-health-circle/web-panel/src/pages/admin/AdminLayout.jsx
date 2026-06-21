@@ -14,16 +14,16 @@ const NAV = [
 
 export default function AdminLayout() {
   const [open, setOpen] = useState(false);
-  const user = tokens.getUser();
+  const user     = tokens.getUser();
   const navigate = useNavigate();
 
   function logout() { tokens.clear(); navigate('/admin/login', { replace: true }); }
   function close()  { setOpen(false); }
 
   return (
-    <div className="shell" style={{ flexDirection: 'column' }}>
+    <div className="shell">
 
-      {/* Mobile top bar */}
+      {/* ── Mobile top bar ── */}
       <div className="mobile-topbar">
         <button className="hamburger" onClick={() => setOpen(true)} aria-label="Open menu">
           <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -36,29 +36,40 @@ export default function AdminLayout() {
         <span className="brand-name">IntenCiv</span>
       </div>
 
-      {/* Overlay */}
+      {/* ── Overlay (closes sidebar on tap outside) ── */}
       <div className={`sidebar-overlay ${open ? 'open' : ''}`} onClick={close} />
 
       <div style={{ display: 'flex', flex: 1 }}>
-        {/* Sidebar */}
+
+        {/* ── Sidebar ── */}
         <aside className={`sidebar ${open ? 'open' : ''}`}>
           <div className="brand">
-            <img src="/logo.png" alt="IntenCiv"
-                 style={{ width: '100%', maxWidth: 160, height: 'auto', display: 'block' }} />
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', marginTop: 4,
-                           display: 'block', letterSpacing: '0.08em' }}>
+            <img
+              src="/logo.png"
+              alt="IntenCiv"
+              style={{ width: '100%', maxWidth: 160, height: 'auto', display: 'block' }}
+            />
+            <span style={{
+              fontSize: 11, color: 'rgba(255,255,255,0.55)',
+              marginTop: 4, display: 'block', letterSpacing: '0.08em'
+            }}>
               ADMIN PANEL
             </span>
           </div>
 
           {NAV.map(n => (
-            <NavLink key={n.to} to={n.to} onClick={close}
-              className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+            <NavLink
+              key={n.to}
+              to={n.to}
+              onClick={close}
+              className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
+            >
               {n.label}
             </NavLink>
           ))}
 
           <div className="spacer" />
+
           <div className="logout">
             Signed in as<br />
             <strong style={{ color: '#fff' }}>{user?.full_name || user?.email}</strong>
@@ -68,8 +79,11 @@ export default function AdminLayout() {
           </button>
         </aside>
 
-        {/* Page content */}
-        <main className="main"><Outlet /></main>
+        {/* ── Page content ── */}
+        <main className="main">
+          <Outlet />
+        </main>
+
       </div>
     </div>
   );

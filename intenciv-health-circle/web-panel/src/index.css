@@ -188,3 +188,67 @@ tr:last-child td { border-bottom: none; }
 .dialog { background: var(--white); border-radius: 12px; padding: 24px; max-width: 420px; width: calc(100% - 40px); }
 .dialog h3 { margin-bottom: 8px; }
 .dialog .actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
+/* ── Mobile hamburger button ── */
+.hamburger {
+  display: none;
+  background: none;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+  color: var(--deep-navy);
+  height: auto;
+}
+
+/* ── Mobile top bar ── */
+.mobile-topbar {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--white);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.mobile-topbar .brand-name {
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--deep-navy);
+}
+
+/* ── Sidebar overlay (mobile) ── */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 200;
+}
+
+@media (max-width: 768px) {
+  .hamburger      { display: flex; }
+  .mobile-topbar  { display: flex; }
+
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0;
+    height: 100%;
+    z-index: 300;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+  .sidebar.open        { transform: translateX(0); }
+  .sidebar-overlay.open { display: block; }
+
+  .main { padding: 16px; }
+
+  .grid-4 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .grid-3 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+@media (max-width: 480px) {
+  .grid-4 { grid-template-columns: repeat(1, minmax(0,1fr)); }
+  .grid-3 { grid-template-columns: repeat(1, minmax(0,1fr)); }
+  .grid-2 { grid-template-columns: repeat(1, minmax(0,1fr)); }
+}

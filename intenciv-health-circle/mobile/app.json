@@ -12,14 +12,18 @@
       "resizeMode": "contain",
       "backgroundColor": "#EBF8FF"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.intenciv.healthcircle",
       "buildNumber": "1",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": false }
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        }
       }
     },
     "android": {
@@ -29,7 +33,12 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#EBF8FF"
       },
-      "permissions": ["INTERNET", "RECEIVE_SMS", "READ_SMS", "VIBRATE"]
+      "permissions": [
+        "INTERNET",
+        "RECEIVE_SMS",
+        "READ_SMS",
+        "VIBRATE"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -37,8 +46,12 @@
       "expo-font"
     ],
     "extra": {
-      "router": { "origin": false },
-      "eas": { "projectId": "REPLACE_WITH_EAS_PROJECT_ID" }
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "1923c7b6-bf7e-4572-9c4a-3e2e8517e1ef"
+      }
     },
     "owner": "intenciv"
   }

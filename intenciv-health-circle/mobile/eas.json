@@ -1,5 +1,7 @@
 {
-  "cli": { "version": ">= 5.0.0" },
+  "cli": {
+    "version": ">= 5.0.0"
+  },
   "build": {
     "development": {
       "developmentClient": true,
@@ -10,25 +12,17 @@
     },
     "production": {
       "android": {
-        "buildType": "app-bundle",
-        "gradleCommand": ":app:bundleRelease"
+        "buildType": "app-bundle"
       },
-      "ios": {
-        "buildType": "release"
-      }
+      "ios": {}
     }
   },
   "submit": {
     "production": {
       "android": {
-        "serviceAccountKeyPath": "./google-service-account.json",
         "track": "production"
-      },
-      "ios": {
-        "appleId": "<apple_developer_email>",
-        "ascAppId": "<app_store_connect_app_id>",
-        "appleTeamId": "<apple_team_id>"
       }
     }
   }
 }
+

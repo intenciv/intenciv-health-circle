@@ -60,7 +60,7 @@ export default function CustomerLogin() {
               value={phone}
               onChangeText={setPhone}
               keyboardType="phone-pad"
-              placeholder="98765 43210"
+              placeholder="73990 00299"
               placeholderTextColor={COLORS.textMid}
               maxLength={11}
               style={styles.input}

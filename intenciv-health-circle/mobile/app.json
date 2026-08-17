@@ -35,8 +35,6 @@
       },
       "permissions": [
         "INTERNET",
-        "RECEIVE_SMS",
-        "READ_SMS",
         "VIBRATE"
       ]
     },

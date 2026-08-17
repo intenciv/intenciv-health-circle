@@ -33,6 +33,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@react-native-community/cli": "^20.0.0",
     "babel-preset-expo": "~54.0.12",
     "patch-package": "^8.0.1"
   }

@@ -14,8 +14,14 @@ export default function Index() {
     );
   }
 
-  if (!user) return <Redirect href="/role-select" />;
-  if (user.role === 'salesperson') return <Redirect href="/(tabs)/sp-home" />;
-  if (user.role === 'customer')    return <Redirect href="/(tabs)/home" />;
-  return <Redirect href="/role-select" />;
+  if (!user) return <Redirect href="/customer-login" />;
+  if (user.role === 'customer') return <Redirect href="/(tabs)/home" />;
+  // Salesperson/admin/reception accounts should use the web panel — see
+  // customer-login.js's error copy for mobile_not_registered. This app is
+  // customer-only now (confirmed directly: "The app is for client only.
+  // The sales person can use the app (pwa) like reception and admin on
+  // desktop"). A non-customer role reaching this app at all shouldn't
+  // happen via the customer login endpoint, but fail back to login
+  // rather than a dead-end screen if it somehow does.
+  return <Redirect href="/customer-login" />;
 }

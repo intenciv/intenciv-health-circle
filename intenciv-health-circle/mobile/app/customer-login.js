@@ -42,11 +42,6 @@ export default function CustomerLogin() {
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <TouchableOpacity onPress={() => router.back()} style={styles.back}>
-            <Ionicons name="chevron-back" size={22} color={COLORS.midBlue} />
-            <Text style={styles.backText}>Back</Text>
-          </TouchableOpacity>
-
           <Text style={styles.h1}>Member sign-in</Text>
           <Text style={styles.sub}>Enter the mobile number registered on your IntenCiv Health Privilege Card.</Text>
 
@@ -94,8 +89,6 @@ export default function CustomerLogin() {
 const styles = StyleSheet.create({
   safe:    { flex: 1, backgroundColor: COLORS.lightBlueBg },
   scroll:  { padding: 24, paddingTop: 12 },
-  back:    { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingVertical: 8 },
-  backText:{ color: COLORS.midBlue, marginLeft: 2, fontWeight: '600' },
 
   h1:      { fontSize: 26, fontWeight: '700', color: COLORS.deepNavy, marginTop: 24 },
   sub:     { color: COLORS.textMid, marginTop: 8, fontSize: 14, lineHeight: 20 },

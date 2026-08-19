@@ -357,6 +357,96 @@ router.put('/cards/:id/assign', body('salesperson_id').isString().notEmpty(), as
   } catch (e) { next(e); }
 });
 
+// Roll back a card to a fresh, reusable state — password-gated since this
+// undoes real work (a salesperson's assignment, or a customer's actual
+// activation) and, for an active card, permanently discards the
+// activation record (amount paid, activation date, who activated it).
+//
+// For an 'active' card specifically (explicit instruction: rollback
+// should "also fully de-activate an already-active card ... card becomes
+// reusable", not just clear the salesperson assignment): unlinks the
+// customer, wipes activation fields, and resets status all the way back
+// to 'unused' - NOT 'assigned' - so it re-enters the same unassigned pool
+// a freshly-created card would be in, consistent with how
+// POST /cards/batch creates new cards.
+//
+// Does NOT touch the customer's coupons or account - "roll back the
+// card" and "remove the client details" were confirmed as two distinct
+// actions (see DELETE /customers/:id below for the latter).
+router.post('/cards/:id/rollback', requireAdminPassword, async (req, res, next) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, status FROM cards WHERE id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'card_not_found' });
+    if (rows[0].status === 'unused') return res.status(409).json({ error: 'card_already_unused' });
+    const [r] = await pool.execute(
+      `UPDATE cards
+          SET status = 'unused',
+              assigned_to_salesperson = NULL,
+              customer_id = NULL,
+              activated_at = NULL,
+              expires_at = NULL,
+              activated_by_salesperson = NULL,
+              amount_paid = NULL
+        WHERE id = ?`,
+      [req.params.id]
+    );
+    if (r.affectedRows === 0) return res.status(409).json({ error: 'card_rollback_failed' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// Permanently delete a customer's account and all their data - password-
+// gated (irreversible, confirmed directly: "Fully delete the customer's
+// account and data"). Runs in a transaction across all 3 steps so this
+// can never partially complete:
+//   1. Any cards this customer activated are rolled back first (same
+//      reset as POST /cards/:id/rollback above) - otherwise deleting the
+//      user row would leave a card with status='active' but a NULL
+//      customer_id (cards.customer_id is ON DELETE SET NULL, which alone
+//      would silently create exactly that broken, inconsistent state -
+//      an "active" card with no customer on it - rather than actually
+//      erroring, so this must be handled explicitly, not left to the FK
+//      constraint alone).
+//   2. Their coupons are deleted first (coupons.customer_id is
+//      ON DELETE RESTRICT specifically, confirmed by reading the schema
+//      directly - a plain DELETE FROM users would be flatly rejected by
+//      the database for any customer who has ever been issued a coupon,
+//      which is most activated customers).
+//   3. The user row itself is deleted.
+router.delete('/customers/:id', requireAdminPassword, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.execute(
+      `SELECT id FROM users WHERE id = ? AND role = 'customer' LIMIT 1`,
+      [req.params.id]
+    );
+    if (rows.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'customer_not_found' }); }
+
+    await conn.execute(
+      `UPDATE cards
+          SET status = 'unused',
+              assigned_to_salesperson = NULL,
+              customer_id = NULL,
+              activated_at = NULL,
+              expires_at = NULL,
+              activated_by_salesperson = NULL,
+              amount_paid = NULL
+        WHERE customer_id = ?`,
+      [req.params.id]
+    );
+    await conn.execute(`DELETE FROM coupons WHERE customer_id = ?`, [req.params.id]);
+    await conn.execute(`DELETE FROM users WHERE id = ?`, [req.params.id]);
+
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (e) { await conn.rollback().catch(() => {}); next(e); }
+  finally { conn.release(); }
+});
+
 // ============ RECEPTION (admin password gated) ============
 router.get('/reception/lookup/:code', requireAdminPassword, async (req, res, next) => {
   try {

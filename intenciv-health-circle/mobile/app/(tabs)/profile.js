@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Linking, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -24,6 +24,9 @@ export default function Profile() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView contentContainerStyle={styles.scroll}>
+        <View style={styles.brandRow}>
+          <Image source={require('../../assets/brand-logo.png')} style={styles.brandLogo} resizeMode="contain" />
+        </View>
         <View style={styles.head}>
           <View style={styles.avatar}><Ionicons name="person" size={36} color={COLORS.white} /></View>
           <Text style={styles.name}>{user?.full_name || 'IntenCiv user'}</Text>
@@ -65,6 +68,8 @@ export default function Profile() {
 const styles = StyleSheet.create({
   safe:   { flex: 1, backgroundColor: COLORS.lightBlueBg },
   scroll: { padding: 20, paddingBottom: 60 },
+  brandRow: { alignItems: 'center', marginBottom: 8 },
+  brandLogo: { width: 140, height: 49 },
   head:   { alignItems: 'center', marginBottom: 16 },
   avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.primaryCyan, justifyContent: 'center', alignItems: 'center' },
   name:   { fontSize: 22, fontWeight: '700', color: COLORS.deepNavy, marginTop: 12 },

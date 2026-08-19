@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
-  KeyboardAvoidingView, Platform, ScrollView,
+  KeyboardAvoidingView, Platform, ScrollView, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -42,6 +42,9 @@ export default function CustomerLogin() {
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <View style={styles.brandRow}>
+            <Image source={require('../assets/brand-logo.png')} style={styles.brandLogo} resizeMode="contain" />
+          </View>
           <Text style={styles.h1}>Member sign-in</Text>
           <Text style={styles.sub}>Enter the mobile number registered on your IntenCiv Health Privilege Card.</Text>
 
@@ -89,8 +92,10 @@ export default function CustomerLogin() {
 const styles = StyleSheet.create({
   safe:    { flex: 1, backgroundColor: COLORS.lightBlueBg },
   scroll:  { padding: 24, paddingTop: 12 },
+  brandRow:{ alignItems: 'center', marginTop: 20, marginBottom: 4 },
+  brandLogo:{ width: 156, height: 55 },
 
-  h1:      { fontSize: 26, fontWeight: '700', color: COLORS.deepNavy, marginTop: 24 },
+  h1:      { fontSize: 26, fontWeight: '700', color: COLORS.deepNavy, marginTop: 20 },
   sub:     { color: COLORS.textMid, marginTop: 8, fontSize: 14, lineHeight: 20 },
 
   inputRow:{ flexDirection: 'row', gap: 10, marginTop: 32 },

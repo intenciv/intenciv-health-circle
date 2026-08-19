@@ -1,6 +1,57 @@
 import { useEffect, useState } from 'react';
 import { api, API_URL, tokens } from '../../services/api';
 
+/**
+ * Password-gated confirmation dialog, shared by Rollback and Delete
+ * Customer below — both call requireAdminPassword-protected backend
+ * routes (POST /admin/cards/:id/rollback, DELETE /admin/customers/:id),
+ * same contract as Reception.jsx's x-admin-password header, but as a
+ * lightweight per-action prompt rather than a whole-page unlock: most of
+ * this page (browsing/filtering/assigning cards) doesn't need password
+ * protection, only these two specific, consequential actions do.
+ */
+function ConfirmWithPassword({ title, body, confirmLabel, danger, onConfirm, onClose }) {
+  const [password, setPassword] = useState('');
+  const [err, setErr]           = useState('');
+  const [busy, setBusy]         = useState(false);
+
+  async function submit(e) {
+    e?.preventDefault();
+    setErr(''); setBusy(true);
+    try {
+      await onConfirm(password);
+      onClose();
+    } catch (e) {
+      const code = e.response?.data?.error;
+      setErr(
+        code === 'admin_password_incorrect' ? 'Incorrect password.' :
+        code === 'admin_password_required'  ? 'Password is required.' :
+        'Action failed. Please try again.'
+      );
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog" onClick={e => e.stopPropagation()}>
+        <h3>{title}</h3>
+        <p style={{ color: 'var(--text-mid)', marginTop: 6 }}>{body}</p>
+        <form onSubmit={submit} style={{ marginTop: 14 }}>
+          <label className="label">Admin password</label>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
+          {err && <div className="error-banner" style={{ marginTop: 10 }}>{err}</div>}
+          <div className="actions" style={{ marginTop: 16 }}>
+            <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" disabled={busy || !password} className={danger ? 'danger' : ''}>
+              {busy ? 'Please wait…' : confirmLabel}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Cards() {
   const [cards, setCards]   = useState([]);
   const [plans, setPlans]   = useState([]);
@@ -10,6 +61,8 @@ export default function Cards() {
   const [batch, setBatch]           = useState({ plan_id: '', assign_to_salesperson_id: '', count: 50 });
   const [openAssign, setOpenAssign] = useState(null);
   const [assignSp, setAssignSp]     = useState('');
+  const [rollbackTarget, setRollbackTarget] = useState(null); // card being rolled back
+  const [deleteTarget, setDeleteTarget]     = useState(null); // card whose customer is being deleted
   const [err, setErr]     = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -38,6 +91,26 @@ export default function Cards() {
       setOpenBatch(false); load();
     } catch (e) { setErr(e.response?.data?.error || 'Generate failed'); }
     finally { setSaving(false); }
+  }
+
+  async function rollbackCard(password) {
+    const r = await fetch(`${API_URL}/admin/cards/${rollbackTarget.id}/rollback`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokens.getAccess()}`, 'x-admin-password': password },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw { response: { data: j } };
+    load();
+  }
+
+  async function deleteCustomer(password) {
+    const r = await fetch(`${API_URL}/admin/customers/${deleteTarget.customer_id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokens.getAccess()}`, 'x-admin-password': password },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw { response: { data: j } };
+    load();
   }
 
   async function assign() {
@@ -104,7 +177,11 @@ export default function Cards() {
               <td>{c.activated_at ? new Date(c.activated_at).toLocaleDateString() : '—'}</td>
               <td>{c.expires_at ? new Date(c.expires_at).toLocaleDateString() : '—'}</td>
               <td>{c.amount_paid ? `₹${Number(c.amount_paid).toFixed(0)}` : '—'}</td>
-              <td>{['unused', 'assigned'].includes(c.status) && <button className="secondary" onClick={() => setOpenAssign(c)}>Assign</button>}</td>
+              <td style={{ display: 'flex', gap: 8 }}>
+                {['unused', 'assigned'].includes(c.status) && <button className="secondary" onClick={() => setOpenAssign(c)}>Assign</button>}
+                {c.status === 'active' && <button className="secondary" onClick={() => setRollbackTarget(c)}>Rollback</button>}
+                {c.status === 'active' && c.customer_id && <button className="danger" onClick={() => setDeleteTarget(c)}>Delete Client</button>}
+              </td>
             </tr>
           ))}
           {cards.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-mid)' }}>No cards found.</td></tr>}
@@ -132,6 +209,12 @@ export default function Cards() {
             </div>
             {['unused', 'assigned'].includes(c.status) && (
               <button className="secondary" onClick={() => setOpenAssign(c)} style={{ marginTop: 12, width: '100%' }}>Assign</button>
+            )}
+            {c.status === 'active' && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button className="secondary" onClick={() => setRollbackTarget(c)} style={{ flex: 1 }}>Rollback</button>
+                {c.customer_id && <button className="danger" onClick={() => setDeleteTarget(c)} style={{ flex: 1 }}>Delete Client</button>}
+              </div>
             )}
           </div>
         ))}
@@ -179,6 +262,30 @@ export default function Cards() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Rollback confirmation */}
+      {rollbackTarget && (
+        <ConfirmWithPassword
+          title={`Roll back ${rollbackTarget.card_number}?`}
+          body={`This permanently undoes the activation. ${rollbackTarget.customer_name || 'The customer'} will be unlinked from this card and lose access — activation date, amount paid, and coupon usage tied to this specific activation cannot be recovered. The card itself becomes reusable.`}
+          confirmLabel="Roll back card"
+          danger
+          onConfirm={rollbackCard}
+          onClose={() => setRollbackTarget(null)}
+        />
+      )}
+
+      {/* Delete client confirmation */}
+      {deleteTarget && (
+        <ConfirmWithPassword
+          title={`Permanently delete ${deleteTarget.customer_name || 'this client'}?`}
+          body="This permanently deletes the client's account and all their data, including their coupons. This cannot be undone."
+          confirmLabel="Delete permanently"
+          danger
+          onConfirm={deleteCustomer}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   );

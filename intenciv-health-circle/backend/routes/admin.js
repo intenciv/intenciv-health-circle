@@ -279,6 +279,7 @@ router.get('/cards', async (req, res, next) => {
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const [rows] = await pool.execute(
       `SELECT c.id, c.card_number, c.status, c.activated_at, c.expires_at, c.amount_paid,
+              c.customer_id,
               p.name AS plan_name,
               sp.full_name AS salesperson_name, sp.phone AS salesperson_phone,
               cu.full_name AS customer_name, cu.phone AS customer_phone

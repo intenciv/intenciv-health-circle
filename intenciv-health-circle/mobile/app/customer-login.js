@@ -8,10 +8,8 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS } from '../constants/colors';
 import { api } from '../services/api';
-import { useAuth } from '../hooks/useAuth';
 
 export default function CustomerLogin() {
-  const { setSession } = useAuth();
   const router = useRouter();
   const [phone, setPhone]     = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,9 +21,8 @@ export default function CustomerLogin() {
     if (clean.length !== 10) { setError('Enter a valid 10-digit mobile number.'); return; }
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/customer/login', { phone: `+91${clean}` });
-      await setSession(data);
-      router.replace('/(tabs)/home');
+      await api.post('/auth/customer/send-otp', { phone: `+91${clean}` });
+      router.push({ pathname: '/customer-otp', params: { phone: clean } });
     } catch (e) {
       const code = e.response?.data?.error;
       setError(
@@ -33,6 +30,8 @@ export default function CustomerLogin() {
           ? 'This number is not linked to any membership. Please contact your sales representative.'
         : code === 'no_active_membership'
           ? 'No active membership found for this number.'
+        : code === 'otp_gateway_failed'
+          ? 'Could not send OTP right now. Please try again in a moment.'
           : 'Login failed. Please try again.'
       );
     } finally { setLoading(false); }

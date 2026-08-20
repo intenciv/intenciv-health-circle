@@ -160,6 +160,15 @@ export default function CustomerHome() {
           <TouchableOpacity style={styles.linkChip} onPress={() => Linking.openURL('https://intenciv.in/health-check-up-packages/')}>
             <Text style={styles.linkChipText}>Health Packages</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.linkChip} onPress={() => Linking.openURL('https://intenciv.in/test_directory/')}>
+            <Text style={styles.linkChipText}>Find a Test</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.linkChip} onPress={() => Linking.openURL('https://intenciv.in/inten-she-packages/')}>
+            <Text style={styles.linkChipText}>IntenShe Packages</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.linkChip} onPress={() => Linking.openURL('https://www.intenciv.in')}>
+            <Text style={styles.linkChipText}>Book a Home Collection</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.linkChip} onPress={() => Linking.openURL('https://intenciv.in/blogs/')}>
             <Text style={styles.linkChipText}>Blog</Text>
           </TouchableOpacity>

@@ -9,7 +9,20 @@ import { connectSocket } from '../../services/socket';
 export default function CustomerHome() {
   const router = useRouter();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
-  const bannerHeight = winHeight * 0.75;
+  // Real aspect ratio of the first offer's actual uploaded image, captured
+  // once it loads via onLoad's nativeEvent (works with remote URLs and
+  // data URIs alike, since it reads the already-loaded image, not a
+  // separate network probe). Falls back to the original 0.75 (3:4)
+  // assumption only until that fires. Confirmed directly: fixing the
+  // container to an assumed 75%-of-screen-height caused the banner to be
+  // cropped ~10-15% on both sides whenever the real uploaded image's
+  // shape didn't exactly match that assumption - resizeMode="cover"
+  // scales up to fill a mismatched container and crops the overflow.
+  // Sizing the container from the image's own real dimensions instead
+  // guarantees the full image always fits with zero cropping, regardless
+  // of exactly what size gets uploaded.
+  const [heroRatio, setHeroRatio] = useState(0.75);
+  const bannerHeight = Math.min(Math.max(winWidth / heroRatio, winHeight * 0.5), winHeight * 0.85);
   const [activeSlide, setActiveSlide] = useState(0);
   const scrollRef = useRef(null);
   const [me, setMe]         = useState(null);
@@ -60,9 +73,11 @@ export default function CustomerHome() {
           <Image source={require('../../assets/brand-logo.png')} style={styles.brandLogo} resizeMode="contain" />
         </View>
 
-        {/* Hero banner — dominant first visual, ~75% of screen height, full
-            width. Swipeable (native paging, no extra library) when there's
-            more than one offer, with dot indicators. */}
+        {/* Hero banner — dominant first visual, sized to the actual
+            uploaded image's real aspect ratio (never cropped), clamped
+            between 50-85% of screen height. Swipeable (native paging, no
+            extra library) when there's more than one offer, with dot
+            indicators. */}
         {offers.length > 0 && (
           <View style={{ marginHorizontal: -20 }}>
             <ScrollView
@@ -72,7 +87,7 @@ export default function CustomerHome() {
               showsHorizontalScrollIndicator={false}
               onMomentumScrollEnd={(e) => setActiveSlide(Math.round(e.nativeEvent.contentOffset.x / winWidth))}
             >
-              {offers.map(o => (
+              {offers.map((o, idx) => (
                 <TouchableOpacity
                   key={o.id}
                   onPress={() => o.link_url && Linking.openURL(o.link_url)}
@@ -80,7 +95,20 @@ export default function CustomerHome() {
                   style={{ width: winWidth, height: bannerHeight }}
                 >
                   {o.image_url
-                    ? <Image source={{ uri: o.image_url }} style={styles.heroImg} resizeMode="cover" />
+                    ? <Image
+                        source={{ uri: o.image_url }}
+                        style={styles.heroImg}
+                        resizeMode="cover"
+                        onLoad={(e) => {
+                          // Only the first slide sets the shared carousel
+                          // height — all slides use one consistent height
+                          // rather than resizing the whole banner area as
+                          // the user swipes between differently-shaped images.
+                          if (idx !== 0) return;
+                          const { width: w, height: h } = e.nativeEvent.source;
+                          if (w > 0 && h > 0) setHeroRatio(w / h);
+                        }}
+                      />
                     : <View style={[styles.heroImg, { backgroundColor: COLORS.lightBlueBg }]} />}
                   {(o.title || o.subtitle) && (
                     <View style={styles.heroTextOverlay}>

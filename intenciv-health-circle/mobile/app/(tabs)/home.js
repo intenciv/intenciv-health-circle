@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, RefreshControl, ActivityIndicator, Image, TouchableOpacity, Linking } from 'react-native';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { View, Text, ScrollView, StyleSheet, RefreshControl, ActivityIndicator, Image, TouchableOpacity, Linking, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { COLORS, RADIUS, SHADOW } from '../../constants/colors';
@@ -8,6 +8,10 @@ import { connectSocket } from '../../services/socket';
 
 export default function CustomerHome() {
   const router = useRouter();
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const bannerHeight = winHeight * 0.75;
+  const [activeSlide, setActiveSlide] = useState(0);
+  const scrollRef = useRef(null);
   const [me, setMe]         = useState(null);
   const [offers, setOffers] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -51,34 +55,54 @@ export default function CustomerHome() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView contentContainerStyle={styles.scroll} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}>
 
-        {/* Brand header */}
+        {/* Brand header — compact, stays above the hero banner */}
         <View style={styles.brandRow}>
           <Image source={require('../../assets/brand-logo.png')} style={styles.brandLogo} resizeMode="contain" />
         </View>
-        <Text style={styles.greet}>Namaste, {firstName(me.member.name)}!</Text>
-        <Text style={styles.tag}>Your IntenCiv Health Privilege Card.</Text>
 
-        {/* Offers — promotional banner, shown first so it feels like a proper landing */}
+        {/* Hero banner — dominant first visual, ~75% of screen height, full
+            width. Swipeable (native paging, no extra library) when there's
+            more than one offer, with dot indicators. */}
         {offers.length > 0 && (
-          <View style={styles.offersSection}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+          <View style={{ marginHorizontal: -20 }}>
+            <ScrollView
+              ref={scrollRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={(e) => setActiveSlide(Math.round(e.nativeEvent.contentOffset.x / winWidth))}
+            >
               {offers.map(o => (
                 <TouchableOpacity
                   key={o.id}
                   onPress={() => o.link_url && Linking.openURL(o.link_url)}
-                  activeOpacity={0.85}
-                  style={styles.offerCard}
+                  activeOpacity={0.9}
+                  style={{ width: winWidth, height: bannerHeight }}
                 >
-                  {o.image_url ? <Image source={{ uri: o.image_url }} style={styles.offerImg} /> : <View style={[styles.offerImg, { backgroundColor: COLORS.lightBlueBg }]} />}
-                  <View style={styles.offerTextWrap}>
-                    <Text style={styles.offerTitle} numberOfLines={2}>{o.title}</Text>
-                    {o.subtitle && <Text style={styles.offerSub} numberOfLines={2}>{o.subtitle}</Text>}
-                  </View>
+                  {o.image_url
+                    ? <Image source={{ uri: o.image_url }} style={styles.heroImg} resizeMode="cover" />
+                    : <View style={[styles.heroImg, { backgroundColor: COLORS.lightBlueBg }]} />}
+                  {(o.title || o.subtitle) && (
+                    <View style={styles.heroTextOverlay}>
+                      {o.title && <Text style={styles.heroTitle} numberOfLines={2}>{o.title}</Text>}
+                      {o.subtitle && <Text style={styles.heroSubtitle} numberOfLines={2}>{o.subtitle}</Text>}
+                    </View>
+                  )}
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            {offers.length > 1 && (
+              <View style={styles.dotsRow}>
+                {offers.map((_, i) => (
+                  <View key={i} style={[styles.dot, i === activeSlide && styles.dotActive]} />
+                ))}
+              </View>
+            )}
           </View>
         )}
+
+        <Text style={styles.greet}>Namaste, {firstName(me.member.name)}!</Text>
+        <Text style={styles.tag}>Your IntenCiv Health Privilege Card.</Text>
 
         {/* Membership card */}
         <View style={styles.card}>
@@ -145,11 +169,17 @@ const styles = StyleSheet.create({
   tag:     { color: COLORS.textMid, marginTop: 4, textAlign: 'center' },
 
   offersSection: { marginTop: 22 },
-  offerCard: { width: 240, backgroundColor: COLORS.white, borderRadius: RADIUS.card, overflow: 'hidden', ...SHADOW },
-  offerImg:  { width: '100%', height: 120 },
-  offerTextWrap: { padding: 12 },
-  offerTitle:{ color: COLORS.deepNavy, fontWeight: '700', fontSize: 14 },
-  offerSub:  { color: COLORS.textMid, fontSize: 12, marginTop: 4 },
+  heroImg: { width: '100%', height: '100%' },
+  heroTextOverlay: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    padding: 20, paddingTop: 40,
+    backgroundColor: 'rgba(13,27,42,0.55)',
+  },
+  heroTitle: { color: COLORS.white, fontSize: 22, fontWeight: '800' },
+  heroSubtitle: { color: COLORS.white, fontSize: 14, marginTop: 4, opacity: 0.95 },
+  dotsRow: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: 10 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.border },
+  dotActive: { backgroundColor: COLORS.primaryCyan, width: 18 },
 
   card:    { backgroundColor: COLORS.white, borderRadius: RADIUS.card, padding: 18, marginTop: 22, ...SHADOW },
   planName:{ color: COLORS.midBlue, fontWeight: '700' },

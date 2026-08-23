@@ -12,7 +12,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const { pool } = require('../config/db');
 const { authenticate, requireRole, requireAdminPassword } = require('../middleware/auth');
-const { hashPassword, hashPin, isValidPin, verifyPassword } = require('../utils/passwords');
+const { hashPassword, hashPin, isValidPin, isValidPassword, verifyPassword } = require('../utils/passwords');
 const { allocateCardSequences } = require('../utils/cards');
 const socket = require('../services/socket');
 
@@ -157,10 +157,18 @@ router.put(
   }
 );
 
+// Permanently removes the salesperson account. Cards they touched
+// (assigned_to_salesperson / activated_by_salesperson) are NOT deleted or
+// hidden — those foreign keys are ON DELETE SET NULL, so sales/card history
+// stays intact, it just stops being attributed to a specific (now-gone)
+// person. Use PUT .../:id { is_active: false } instead if you just want to
+// deactivate someone without erasing the account.
 router.delete('/salespersons/:id', async (req, res, next) => {
   try {
-    // Soft delete = deactivate (we keep card history intact).
-    await pool.execute(`UPDATE users SET is_active = 0 WHERE id = ? AND role = 'salesperson'`, [req.params.id]);
+    const [result] = await pool.execute(
+      `DELETE FROM users WHERE id = ? AND role = 'salesperson'`, [req.params.id]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'salesperson_not_found' });
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -624,6 +632,12 @@ router.post('/change-password',
   body('new_password').isString().isLength({ min: 6 }),
   async (req, res, next) => {
     try {
+      if (!isValidPassword(req.body.new_password)) {
+        return res.status(400).json({
+          error: 'weak_password',
+          message: 'Password must be at least 8 characters and include one capital letter, one numeral, and one special character.',
+        });
+      }
       const [rows] = await pool.execute('SELECT password_hash FROM users WHERE id = ? LIMIT 1', [req.user.id]);
       const ok = await verifyPassword(req.body.current_password, rows[0].password_hash);
       if (!ok) return res.status(401).json({ error: 'invalid_current_password' });

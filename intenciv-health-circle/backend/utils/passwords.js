@@ -25,8 +25,15 @@ async function verifyPin(plain, hash) {
 function isValidPin(pin) {
   return /^\d{4}$/.test(String(pin || ''));
 }
+
+// Admin password policy, harmonized with HRM/IVS/CRM: minimum 8 characters,
+// at least one capital letter, one special character, and one numeral.
 function isValidPassword(pwd) {
-  return /^\d{6,}$/.test(String(pwd || '')) || (String(pwd || '').length >= 6);
+  const s = String(pwd || '');
+  return s.length >= 8
+    && /[A-Z]/.test(s)
+    && /[0-9]/.test(s)
+    && /[^A-Za-z0-9]/.test(s);
 }
 
 module.exports = { hashPassword, verifyPassword, hashPin, verifyPin, isValidPin, isValidPassword };

@@ -41,18 +41,21 @@ function normalisePhone(raw) {
 }
 
 // ── ADMIN ────────────────────────────────────────────────────────────────────
+// Login is by Employee ID (format INT0001, assigned in HRM Employee Master),
+// not email — harmonized with the same login scheme used across HRM/IVS/CRM.
+// Email stays on the record as contact info only, no longer used to sign in.
 router.post(
   '/admin/login',
-  body('email').isEmail(),
+  body('employee_id').isString().notEmpty(),
   body('password').isString().isLength({ min: 6 }),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
     try {
       const [rows] = await pool.execute(
-        `SELECT id, role, email, full_name, password_hash, is_active
-           FROM users WHERE email = ? AND role = 'admin' LIMIT 1`,
-        [req.body.email.toLowerCase().trim()]
+        `SELECT id, role, employee_id, email, full_name, password_hash, is_active
+           FROM users WHERE employee_id = ? AND role = 'admin' LIMIT 1`,
+        [req.body.employee_id.trim().toUpperCase()]
       );
       if (rows.length === 0 || !rows[0].is_active)
         return res.status(401).json({ error: 'invalid_credentials' });

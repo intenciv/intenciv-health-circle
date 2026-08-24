@@ -1,9 +1,9 @@
 /**
  * Auth routes — public.
  *
- *   POST /auth/admin/login                { email, password }   → tokens
- *   POST /auth/reception/login            { email, password }   → tokens
- *   POST /auth/salesperson/login          { phone, pin }        → tokens
+ *   POST /auth/admin/login                { employee_id, password }   → tokens
+ *   POST /auth/reception/login            { employee_id, password }   → tokens
+ *   POST /auth/salesperson/login          { employee_id, password }   → tokens
  *   POST /auth/customer/send-otp          { phone }             → sends OTP via Authkey 2FA
  *   POST /auth/customer/verify-otp        { phone, otp }        → tokens
  *   POST /auth/refresh-token              { refresh_token }     → access token
@@ -23,7 +23,7 @@ const { body, validationResult } = require('express-validator');
 
 const { pool }                    = require('../config/db');
 const { signAccess, signRefresh, verify } = require('../utils/jwt');
-const { verifyPassword, verifyPin }       = require('../utils/passwords');
+const { verifyPassword }                  = require('../utils/passwords');
 const authkey                             = require('../services/authkey');
 
 const router = express.Router();
@@ -70,18 +70,20 @@ router.post(
 );
 
 // ── RECEPTION ─────────────────────────────────────────────────────────────────
+// Login is by Employee ID, same as Admin — harmonized across HRM/IVS/CRM/
+// Health Circle. Email stays on the record as contact info only.
 router.post(
   '/reception/login',
-  body('email').isEmail(),
+  body('employee_id').isString().notEmpty(),
   body('password').isString().isLength({ min: 6 }),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
     try {
       const [rows] = await pool.execute(
-        `SELECT id, role, email, full_name, password_hash, is_active
-           FROM users WHERE email = ? AND role = 'reception' LIMIT 1`,
-        [req.body.email.toLowerCase().trim()]
+        `SELECT id, role, employee_id, email, full_name, password_hash, is_active
+           FROM users WHERE employee_id = ? AND role = 'reception' LIMIT 1`,
+        [req.body.employee_id.trim().toUpperCase()]
       );
       if (rows.length === 0 || !rows[0].is_active)
         return res.status(401).json({ error: 'invalid_credentials' });
@@ -96,29 +98,33 @@ router.post(
 );
 
 // ── SALESPERSON ───────────────────────────────────────────────────────────────
+// Login is by Employee ID + password, same as Admin/Reception. This is
+// separate from the salesperson's 4-digit PIN, which stays exactly as it
+// was — it's still required to authorize each card activation
+// (POST /salesperson/activation/finalize), a different, still-necessary
+// control for the moment a card is actually activated in front of a
+// customer. Phone stays on the record as contact info only, no longer
+// used to sign in.
 router.post(
   '/salesperson/login',
-  body('phone').isString().notEmpty(),
-  body('pin').isString().isLength({ min: 4, max: 4 }),
+  body('employee_id').isString().notEmpty(),
+  body('password').isString().isLength({ min: 6 }),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
     try {
-      const phone = normalisePhone(req.body.phone);
-      if (!phone) return res.status(400).json({ error: 'invalid_phone' });
-
       const [rows] = await pool.execute(
-        `SELECT id, role, phone, full_name, pin_hash, is_active
-           FROM users WHERE phone = ? AND role = 'salesperson' LIMIT 1`,
-        [phone]
+        `SELECT id, role, employee_id, phone, full_name, password_hash, is_active
+           FROM users WHERE employee_id = ? AND role = 'salesperson' LIMIT 1`,
+        [req.body.employee_id.trim().toUpperCase()]
       );
       if (rows.length === 0 || !rows[0].is_active)
         return res.status(401).json({ error: 'invalid_credentials' });
-      const ok = await verifyPin(req.body.pin, rows[0].pin_hash);
+      const ok = await verifyPassword(req.body.password, rows[0].password_hash);
       if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
       await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
-      const { pin_hash, ...user } = rows[0];
+      const { password_hash, ...user } = rows[0];
       res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
     } catch (e) { next(e); }
   }

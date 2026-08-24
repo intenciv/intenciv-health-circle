@@ -2,6 +2,12 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, tokens } from '../services/api';
 
+// All three panel roles now sign in with the same shape: Employee ID
+// (format INT0001, assigned in HRM Employee Master) + a password set
+// directly by Admin — harmonized with HRM/IVS/CRM. Salesperson's separate
+// 4-digit PIN (used to authorize each card activation in the field) is
+// untouched by this — it's a different control from signing into the
+// panel, not a login credential.
 const ROLES = [
   {
     id: 'admin',
@@ -9,7 +15,6 @@ const ROLES = [
     endpoint: '/auth/admin/login',
     redirect: '/admin/dashboard',
     subtitle: 'Operations dashboard — tiers, codes, agents, reports.',
-    fields: 'email_password',
   },
   {
     id: 'salesperson',
@@ -17,7 +22,6 @@ const ROLES = [
     endpoint: '/auth/salesperson/login',
     redirect: '/salesperson/dashboard',
     subtitle: 'Card activation for field agents.',
-    fields: 'phone_pin',
   },
   {
     id: 'reception',
@@ -25,18 +29,15 @@ const ROLES = [
     endpoint: '/auth/reception/login',
     redirect: '/reception/desk',
     subtitle: 'Coupon lookup & availing desk.',
-    fields: 'email_password',
   },
 ];
 
 export default function Login() {
-  const [role, setRole]       = useState('admin');
-  const [email, setEmail]     = useState('');
-  const [password, setPassword] = useState('');
-  const [phone, setPhone]     = useState('');
-  const [pin, setPin]         = useState('');
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
+  const [role, setRole]             = useState('admin');
+  const [employeeId, setEmployeeId] = useState('');
+  const [password, setPassword]     = useState('');
+  const [error, setError]           = useState('');
+  const [loading, setLoading]       = useState(false);
   const navigate = useNavigate();
 
   const selected = ROLES.find(r => r.id === role);
@@ -44,36 +45,23 @@ export default function Login() {
   function switchRole(r) {
     setRole(r);
     setError('');
-    setEmail(''); setPassword('');
-    setPhone(''); setPin('');
+    setEmployeeId(''); setPassword('');
   }
 
   async function submit(e) {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
-      const payload = selected.fields === 'phone_pin'
-        ? { phone: phone.trim(), pin }
-        : { email: email.trim(), password };
-      const { data } = await api.post(selected.endpoint, payload);
+      const { data } = await api.post(selected.endpoint, { employee_id: employeeId.trim(), password });
       tokens.setSession(data);
       navigate(selected.redirect, { replace: true });
     } catch (err) {
       const code = err.response?.data?.error;
-      setError(
-        code === 'invalid_credentials'
-          ? selected.fields === 'phone_pin'
-            ? 'Invalid phone or PIN.'
-            : 'Invalid email or password.'
-          : 'Login failed. Please try again.'
-      );
+      setError(code === 'invalid_credentials' ? 'Invalid Employee ID or password.' : 'Login failed. Please try again.');
     } finally { setLoading(false); }
   }
 
-  const isPhonePin = selected.fields === 'phone_pin';
-  const canSubmit  = isPhonePin
-    ? phone.length > 0 && pin.length === 4
-    : email.length > 0 && password.length > 0;
+  const canSubmit = employeeId.length > 0 && password.length > 0;
 
   return (
     <div className="center-page">
@@ -112,55 +100,26 @@ export default function Login() {
 
         {error && <div className="error-banner">{error}</div>}
 
-        {/* Email + Password (Admin & Reception) */}
-        {!isPhonePin && (
-          <>
-            <label className="label">Email</label>
-            <input
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              type="email"
-              placeholder="you@intenciv.com"
-              autoFocus
-              required
-            />
-            <div style={{ height: 12 }} />
-            <label className="label">Password</label>
-            <input
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              type="password"
-              placeholder="••••••"
-              required
-            />
-          </>
-        )}
+        <label className="label">Employee ID</label>
+        <input
+          value={employeeId}
+          onChange={e => setEmployeeId(e.target.value)}
+          type="text"
+          placeholder="INT0001"
+          autoCapitalize="characters"
+          autoFocus
+          required
+        />
 
-        {/* Phone + PIN (Salesperson) */}
-        {isPhonePin && (
-          <>
-            <label className="label">Mobile Number</label>
-            <input
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              type="tel"
-              placeholder="9876543210"
-              autoFocus
-              inputMode="numeric"
-              required
-            />
-            <div style={{ height: 12 }} />
-            <label className="label">PIN (4 digits)</label>
-            <input
-              value={pin}
-              onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
-              type="password"
-              placeholder="••••"
-              inputMode="numeric"
-              required
-            />
-          </>
-        )}
+        <div style={{ height: 12 }} />
+        <label className="label">Password</label>
+        <input
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          type="password"
+          placeholder="••••••••"
+          required
+        />
 
         <div style={{ height: 16 }} />
         <button type="submit" disabled={loading || !canSubmit} style={{ width: '100%', height: 48 }}>

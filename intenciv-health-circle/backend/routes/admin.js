@@ -26,6 +26,12 @@ function normalisePhone(raw) {
   if (d.length === 12 && d.startsWith('91')) return `+${d}`;
   return null;
 }
+
+// Employee ID format shared across HRM/IVS/CRM/Health Circle: INT + 4 digits,
+// assigned in HRM Employee Master. Used as the login username for Admin,
+// Salesperson, and Reception accounts alike.
+const EMPLOYEE_ID_RE = /^INT\d{4}$/;
+function normaliseEmployeeId(raw) { return String(raw || '').trim().toUpperCase(); }
 function csv(rows) {
   if (rows.length === 0) return '';
   const headers = Object.keys(rows[0]);
@@ -83,10 +89,16 @@ router.get('/dashboard', async (_req, res, next) => {
 });
 
 // ============ SALESPERSONS ============
+// Login username is now Employee ID (format INT0001, assigned in HRM
+// Employee Master) + a password, same pattern as Admin/Reception. This is
+// separate from the 4-digit PIN, which is kept exactly as before — it's
+// still what a salesperson re-enters to authorize each card activation in
+// the field, a different control from signing into the panel. Phone is
+// kept on the record as contact info only, no longer used to sign in.
 router.get('/salespersons', async (_req, res, next) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT u.id, u.full_name, u.phone, u.is_active, u.created_at, u.last_login,
+      `SELECT u.id, u.employee_id, u.full_name, u.phone, u.is_active, u.created_at, u.last_login,
               (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND DATE(c.activated_at)=CURDATE())              AS today_count,
               (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND c.activated_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS week_count,
               (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND YEAR(c.activated_at)=YEAR(CURDATE()) AND MONTH(c.activated_at)=MONTH(CURDATE())) AS month_count,
@@ -100,27 +112,39 @@ router.get('/salespersons', async (_req, res, next) => {
 router.post(
   '/salespersons',
   body('full_name').isString().isLength({ min: 2, max: 100 }),
-  body('phone').isString().notEmpty(),
+  body('employee_id').isString().notEmpty(),
+  body('password').isString(),
   body('pin').isString(),
+  body('phone').optional({ nullable: true }).isString(),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
     try {
-      const phone = normalisePhone(req.body.phone);
-      if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+      const employeeId = normaliseEmployeeId(req.body.employee_id);
+      if (!EMPLOYEE_ID_RE.test(employeeId)) return res.status(400).json({ error: 'invalid_employee_id_format' });
+      if (!isValidPassword(req.body.password)) return res.status(400).json({ error: 'weak_password' });
       if (!isValidPin(req.body.pin)) return res.status(400).json({ error: 'pin_must_be_4_digits' });
 
-      const [exists] = await pool.execute('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
-      if (exists.length > 0) return res.status(409).json({ error: 'phone_already_in_use' });
+      const [dupeId] = await pool.execute('SELECT id FROM users WHERE employee_id = ? LIMIT 1', [employeeId]);
+      if (dupeId.length > 0) return res.status(409).json({ error: 'employee_id_already_in_use' });
+
+      let phone = null;
+      if (req.body.phone) {
+        phone = normalisePhone(req.body.phone);
+        if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+        const [dupePhone] = await pool.execute('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
+        if (dupePhone.length > 0) return res.status(409).json({ error: 'phone_already_in_use' });
+      }
 
       const id = uuidv4();
+      const passwordHash = await hashPassword(req.body.password);
       const pinHash = await hashPin(req.body.pin);
       await pool.execute(
-        `INSERT INTO users (id, role, phone, full_name, pin_hash, is_active, created_at)
-         VALUES (?, 'salesperson', ?, ?, ?, 1, NOW())`,
-        [id, phone, req.body.full_name, pinHash]
+        `INSERT INTO users (id, role, employee_id, phone, full_name, password_hash, pin_hash, is_active, created_at)
+         VALUES (?, 'salesperson', ?, ?, ?, ?, ?, 1, NOW())`,
+        [id, employeeId, phone, req.body.full_name, passwordHash, pinHash]
       );
-      res.status(201).json({ id, phone, full_name: req.body.full_name });
+      res.status(201).json({ id, employee_id: employeeId, phone, full_name: req.body.full_name });
     } catch (e) { next(e); }
   }
 );
@@ -128,7 +152,9 @@ router.post(
 router.put(
   '/salespersons/:id',
   body('full_name').optional().isString(),
-  body('phone').optional().isString(),
+  body('phone').optional({ nullable: true }).isString(),
+  body('employee_id').optional().isString(),
+  body('password').optional().isString(),
   body('pin').optional().isString(),
   body('is_active').optional().isBoolean(),
   async (req, res, next) => {
@@ -137,10 +163,25 @@ router.put(
     try {
       const sets = [], params = [];
       if (req.body.full_name) { sets.push('full_name = ?'); params.push(req.body.full_name); }
-      if (req.body.phone)     {
-        const p = normalisePhone(req.body.phone);
-        if (!p) return res.status(400).json({ error: 'invalid_phone' });
-        sets.push('phone = ?'); params.push(p);
+      if (req.body.phone !== undefined) {
+        if (req.body.phone) {
+          const p = normalisePhone(req.body.phone);
+          if (!p) return res.status(400).json({ error: 'invalid_phone' });
+          sets.push('phone = ?'); params.push(p);
+        } else {
+          sets.push('phone = NULL');
+        }
+      }
+      if (req.body.employee_id) {
+        const eid = normaliseEmployeeId(req.body.employee_id);
+        if (!EMPLOYEE_ID_RE.test(eid)) return res.status(400).json({ error: 'invalid_employee_id_format' });
+        const [dupeId] = await pool.execute('SELECT id FROM users WHERE employee_id = ? AND id != ? LIMIT 1', [eid, req.params.id]);
+        if (dupeId.length > 0) return res.status(409).json({ error: 'employee_id_already_in_use' });
+        sets.push('employee_id = ?'); params.push(eid);
+      }
+      if (req.body.password) {
+        if (!isValidPassword(req.body.password)) return res.status(400).json({ error: 'weak_password' });
+        sets.push('password_hash = ?'); params.push(await hashPassword(req.body.password));
       }
       if (req.body.pin) {
         if (!isValidPin(req.body.pin)) return res.status(400).json({ error: 'pin_must_be_4_digits' });

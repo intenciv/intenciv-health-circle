@@ -1,8 +1,8 @@
 /**
  * Auth routes — public.
  *
- *   POST /auth/admin/login                { email, password }   → tokens
- *   POST /auth/reception/login            { email, password }   → tokens
+ *   POST /auth/admin/login                { employee_id, password } → tokens
+ *   POST /auth/reception/login            { employee_id, password } → tokens
  *   POST /auth/salesperson/login          { phone, pin }        → tokens
  *   POST /auth/customer/login             { phone }             → tokens (no OTP, legacy)
  *   POST /auth/customer/send-otp          { phone }             → sends OTP via Authkey
@@ -45,16 +45,16 @@ function normalisePhone(raw) {
 // ── ADMIN ────────────────────────────────────────────────────────────────────
 router.post(
   '/admin/login',
-  body('email').isEmail(),
+  body('employee_id').isString().notEmpty(),
   body('password').isString().isLength({ min: 6 }),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
     try {
       const [rows] = await pool.execute(
-        `SELECT id, role, email, full_name, password_hash, is_active
-           FROM users WHERE email = ? AND role = 'admin' LIMIT 1`,
-        [req.body.email.toLowerCase().trim()]
+        `SELECT id, role, employee_id, email, full_name, password_hash, is_active
+           FROM users WHERE employee_id = ? AND role = 'admin' LIMIT 1`,
+        [req.body.employee_id.trim().toUpperCase()]
       );
       if (rows.length === 0 || !rows[0].is_active)
         return res.status(401).json({ error: 'invalid_credentials' });
@@ -71,16 +71,16 @@ router.post(
 // ── RECEPTION ─────────────────────────────────────────────────────────────────
 router.post(
   '/reception/login',
-  body('email').isEmail(),
+  body('employee_id').isString().notEmpty(),
   body('password').isString().isLength({ min: 6 }),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
     try {
       const [rows] = await pool.execute(
-        `SELECT id, role, email, full_name, password_hash, is_active
-           FROM users WHERE email = ? AND role = 'reception' LIMIT 1`,
-        [req.body.email.toLowerCase().trim()]
+        `SELECT id, role, employee_id, email, full_name, password_hash, is_active
+           FROM users WHERE employee_id = ? AND role = 'reception' LIMIT 1`,
+        [req.body.employee_id.trim().toUpperCase()]
       );
       if (rows.length === 0 || !rows[0].is_active)
         return res.status(401).json({ error: 'invalid_credentials' });

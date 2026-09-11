@@ -82,19 +82,13 @@ router.post(
 );
 
 // ── RECEPTION ─────────────────────────────────────────────────────────────────
-// Accepts an Employee ID *or* an email address in the same field.
+// Employee ID + password, same as Admin and Salesperson.
 //
-// Reception accounts predate the Employee ID login model: they were created
-// by hand in SQL on 2026-06-22, back when this route authenticated on email
-// (commit ca0a60b), and there has never been an endpoint or admin screen that
-// creates a reception user — so nothing ever required an employee_id of them.
-// When login moved to employee_id, migration 006 was supposed to backfill one,
-// but it was never run in production, leaving both accounts with
-// employee_id IS NULL and therefore unable to match a lookup keyed on it: a
-// permanent 401 that looks exactly like a wrong password.
-//
-// Matching either identifier lets those accounts sign in with the credentials
-// they already have, and keeps working once employee_ids are assigned.
+// Reception accounts are created through POST /admin/receptionists, which
+// requires an Employee ID — so an account that cannot log in can no longer be
+// created. (The two accounts that predate that endpoint were inserted by hand
+// in SQL with no employee_id, and had to be given one from the Reception page
+// in the admin panel before they could sign in.)
 router.post(
   '/reception/login',
   body('employee_id').isString().notEmpty(),
@@ -103,13 +97,10 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
     try {
-      const identifier = req.body.employee_id.trim();
       const [rows] = await pool.execute(
         `SELECT id, role, employee_id, email, full_name, password_hash, is_active
-           FROM users
-          WHERE role = 'reception' AND (employee_id = ? OR email = ?)
-          LIMIT 1`,
-        [identifier.toUpperCase(), identifier.toLowerCase()]
+           FROM users WHERE employee_id = ? AND role = 'reception' LIMIT 1`,
+        [req.body.employee_id.trim().toUpperCase()]
       );
       if (rows.length === 0 || !rows[0].is_active || !rows[0].password_hash)
         return res.status(401).json({ error: 'invalid_credentials' });

@@ -3,6 +3,7 @@ import Login                      from './pages/Login.jsx';
 import AdminLayout                from './pages/admin/AdminLayout.jsx';
 import Dashboard                  from './pages/admin/Dashboard.jsx';
 import Salespersons               from './pages/admin/Salespersons.jsx';
+import Receptionists              from './pages/admin/Receptionists.jsx';
 import Plans                      from './pages/admin/Plans.jsx';
 import Cards                      from './pages/admin/Cards.jsx';
 import Offers                     from './pages/admin/Offers.jsx';
@@ -43,6 +44,7 @@ export default function App() {
         <Route index                element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard"     element={<Dashboard />} />
         <Route path="salespersons"  element={<Salespersons />} />
+        <Route path="receptionists" element={<Receptionists />} />
         <Route path="plans"         element={<Plans />} />
         <Route path="cards"         element={<Cards />} />
         <Route path="offers"        element={<Offers />} />

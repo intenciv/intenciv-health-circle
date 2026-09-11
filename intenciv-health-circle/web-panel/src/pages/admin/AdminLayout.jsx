@@ -5,6 +5,7 @@ import { tokens } from '../../services/api';
 const NAV = [
   { to: '/admin/dashboard',    label: 'Dashboard' },
   { to: '/admin/salespersons', label: 'Salespersons' },
+  { to: '/admin/receptionists', label: 'Reception Staff' },
   { to: '/admin/plans',        label: 'Plans & Benefits' },
   { to: '/admin/cards',        label: 'Cards' },
   { to: '/admin/offers',       label: 'Offers' },

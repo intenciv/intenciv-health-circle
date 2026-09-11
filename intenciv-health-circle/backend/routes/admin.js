@@ -214,6 +214,139 @@ router.delete('/salespersons/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ============ RECEPTIONISTS ============
+// Reception accounts had no creation path at all until now: the two that
+// exist in production were inserted by hand in SQL, which is how they ended
+// up with employee_id IS NULL and unable to log in. These endpoints mirror
+// the salesperson ones so a reception account can only ever be created with
+// the Employee ID it needs to sign in.
+//
+// Reception has no activation PIN — that control belongs to salespersons
+// authorising card activations in the field — so there is no pin here.
+
+router.get('/receptionists', async (_req, res, next) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, employee_id, full_name, email, phone, is_active, created_at, last_login
+         FROM users WHERE role = 'reception' ORDER BY full_name ASC`
+    );
+    res.json({ receptionists: rows });
+  } catch (e) { next(e); }
+});
+
+router.post(
+  '/receptionists',
+  body('full_name').isString().isLength({ min: 2, max: 100 }),
+  body('employee_id').isString().notEmpty(),
+  body('password').isString(),
+  body('email').optional({ nullable: true }).isString(),
+  body('phone').optional({ nullable: true }).isString(),
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return bail(res, errors);
+    try {
+      const employeeId = normaliseEmployeeId(req.body.employee_id);
+      if (!EMPLOYEE_ID_RE.test(employeeId)) return res.status(400).json({ error: 'invalid_employee_id_format' });
+      if (!isValidPassword(req.body.password)) return res.status(400).json({ error: 'weak_password' });
+
+      const [dupeId] = await pool.execute('SELECT id FROM users WHERE employee_id = ? LIMIT 1', [employeeId]);
+      if (dupeId.length > 0) return res.status(409).json({ error: 'employee_id_already_in_use' });
+
+      let email = null;
+      if (req.body.email) {
+        email = String(req.body.email).trim().toLowerCase();
+        const [dupeEmail] = await pool.execute('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
+        if (dupeEmail.length > 0) return res.status(409).json({ error: 'email_already_in_use' });
+      }
+
+      let phone = null;
+      if (req.body.phone) {
+        phone = normalisePhone(req.body.phone);
+        if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+        const [dupePhone] = await pool.execute('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
+        if (dupePhone.length > 0) return res.status(409).json({ error: 'phone_already_in_use' });
+      }
+
+      const id = uuidv4();
+      const passwordHash = await hashPassword(req.body.password);
+      await pool.execute(
+        `INSERT INTO users (id, role, employee_id, email, phone, full_name, password_hash, is_active, created_at)
+         VALUES (?, 'reception', ?, ?, ?, ?, ?, 1, NOW())`,
+        [id, employeeId, email, phone, req.body.full_name, passwordHash]
+      );
+      res.status(201).json({ id, employee_id: employeeId, email, phone, full_name: req.body.full_name });
+    } catch (e) { next(e); }
+  }
+);
+
+router.put(
+  '/receptionists/:id',
+  body('full_name').optional().isString(),
+  body('employee_id').optional().isString(),
+  body('password').optional().isString(),
+  body('email').optional({ nullable: true }).isString(),
+  body('phone').optional({ nullable: true }).isString(),
+  body('is_active').optional().isBoolean(),
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return bail(res, errors);
+    try {
+      const sets = [], params = [];
+      if (req.body.full_name) { sets.push('full_name = ?'); params.push(req.body.full_name); }
+      if (req.body.employee_id) {
+        const eid = normaliseEmployeeId(req.body.employee_id);
+        if (!EMPLOYEE_ID_RE.test(eid)) return res.status(400).json({ error: 'invalid_employee_id_format' });
+        const [dupeId] = await pool.execute('SELECT id FROM users WHERE employee_id = ? AND id != ? LIMIT 1', [eid, req.params.id]);
+        if (dupeId.length > 0) return res.status(409).json({ error: 'employee_id_already_in_use' });
+        sets.push('employee_id = ?'); params.push(eid);
+      }
+      if (req.body.password) {
+        if (!isValidPassword(req.body.password)) return res.status(400).json({ error: 'weak_password' });
+        sets.push('password_hash = ?'); params.push(await hashPassword(req.body.password));
+      }
+      if (req.body.email !== undefined) {
+        if (req.body.email) {
+          const email = String(req.body.email).trim().toLowerCase();
+          const [dupeEmail] = await pool.execute('SELECT id FROM users WHERE email = ? AND id != ? LIMIT 1', [email, req.params.id]);
+          if (dupeEmail.length > 0) return res.status(409).json({ error: 'email_already_in_use' });
+          sets.push('email = ?'); params.push(email);
+        } else {
+          sets.push('email = NULL');
+        }
+      }
+      if (req.body.phone !== undefined) {
+        if (req.body.phone) {
+          const ph = normalisePhone(req.body.phone);
+          if (!ph) return res.status(400).json({ error: 'invalid_phone' });
+          sets.push('phone = ?'); params.push(ph);
+        } else {
+          sets.push('phone = NULL');
+        }
+      }
+      if (typeof req.body.is_active === 'boolean') {
+        sets.push('is_active = ?'); params.push(req.body.is_active ? 1 : 0);
+      }
+      if (sets.length === 0) return res.status(400).json({ error: 'nothing_to_update' });
+      params.push(req.params.id);
+      const [r] = await pool.execute(`UPDATE users SET ${sets.join(', ')} WHERE id = ? AND role = 'reception'`, params);
+      if (r.affectedRows === 0) return res.status(404).json({ error: 'receptionist_not_found' });
+      res.json({ ok: true });
+    } catch (e) { next(e); }
+  }
+);
+
+// Reception accounts own no cards or coupons, so deleting one removes only
+// the login. Use PUT .../:id { is_active: false } to suspend instead.
+router.delete('/receptionists/:id', async (req, res, next) => {
+  try {
+    const [result] = await pool.execute(
+      `DELETE FROM users WHERE id = ? AND role = 'reception'`, [req.params.id]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'receptionist_not_found' });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // ============ PLANS + BENEFITS ============
 router.get('/plans', async (_req, res, next) => {
   try {

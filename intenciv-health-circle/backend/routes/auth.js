@@ -5,7 +5,7 @@
  *   POST /auth/reception/login            { employee_id, password } → tokens
  *   POST /auth/salesperson/login          { phone, pin }        → tokens
  *   POST /auth/customer/login             { phone }             → tokens (no OTP, legacy)
- *   POST /auth/customer/send-otp          { phone }             → sends OTP via Authkey
+ *   POST /auth/customer/send-otp          { phone }             → sends OTP via Datagen
  *   POST /auth/customer/verify-otp        { phone, otp }        → tokens
  *   POST /auth/refresh-token              { refresh_token }     → access token
  */

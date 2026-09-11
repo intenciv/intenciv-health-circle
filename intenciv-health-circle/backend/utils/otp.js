@@ -1,33 +1,20 @@
 /**
- * OTP sender via Authkey.io
+ * OTP sender via Datagen.
+ *
+ * Thin wrapper over services/datagen.js that throws on a failed send, because
+ * the customer-login route treats an undelivered OTP as a hard error.
  */
+const datagen = require('../services/datagen');
 
 async function sendOTP(phone, otp) {
-  const mobile  = phone.replace('+', '');
-  const message = `Your IntenCiv Health OTP is ${otp}. Valid for 10 minutes. Do not share with anyone. -IntenCiv`;
+  const result = await datagen.sendOtp({ phone, otp });
 
-  const params = new URLSearchParams({
-    authkey:      process.env.AUTHKEY_API_KEY,
-    mobile:       mobile,
-    country_code: '91',
-    sid:          process.env.AUTHKEY_WELCOME_SID,
-    msg:          message,
-  });
-
-  if (process.env.AUTHKEY_TEMPLATE_SID) {
-    params.append('template_id', process.env.AUTHKEY_TEMPLATE_SID);
+  if (!result.ok) {
+    throw new Error(`Datagen error: ${result.message || 'Unknown error'}`);
   }
 
-  const res  = await fetch(`https://api.authkey.io/request?${params.toString()}`);
-  const data = await res.json();
-
-  if (data.type === 'error') {
-    console.error('[OTP] Authkey error:', data);
-    throw new Error(`Authkey error: ${data.message || 'Unknown error'}`);
-  }
-
-  console.log(`[OTP] Sent to ${phone}, request_id: ${data.request_id || '-'}`);
-  return data;
+  console.log(`[OTP] Sent to ${phone}, campaign_id: ${result.campaignId || '-'}`);
+  return result;
 }
 
 module.exports = { sendOTP };

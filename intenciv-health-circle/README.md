@@ -76,7 +76,7 @@ POST   /admin/reception/avail/:code         + x-admin-password header → realti
 ## Deployment quick start
 
 1. **MySQL on Railway** → plugin → run the 3 SQL files.
-2. **Backend on Railway** → set env from `backend/.env.example` (includes `AUTHKEY_API_KEY=2ba14bfe5d5d2db2`, `AUTHKEY_TEMPLATE_SID=39300`). Generate a strong `JWT_SECRET`.
+2. **Backend on Railway** → set env from `backend/.env.example` (includes `DATAGEN_AUTH_KEY`, `DATAGEN_SENDER_ID`). Generate a strong `JWT_SECRET`.
 3. **Web panel on Vercel** → root `web-panel`, set `VITE_API_URL` to the Railway URL.
 4. **Mobile via EAS** → `eas build -p android --profile production` / `eas build -p ios --profile production`. `+91` is hard-coded in the customer login (India-only as required).
 
@@ -86,7 +86,7 @@ POST   /admin/reception/avail/:code         + x-admin-password header → realti
 2. Admin → create a salesperson (`POST /admin/salespersons`) with phone + 4-digit PIN.
 3. Admin → generate card batch (`POST /admin/cards/batch`) assigned to that salesperson.
 4. Salesperson → opens mobile app → role-select → "Sales rep" → mobile+PIN.
-5. Salesperson → Activate tab → pick card → customer details → OTP from authkey → PIN.
+5. Salesperson → Activate tab → pick card → customer details → OTP from Datagen → PIN.
 6. Customer → opens mobile app → role-select → "Member" → +91 + their number → sees membership + 8 benefits.
 7. Admin (in web panel) → call `/admin/reception/lookup/:code` (with `x-admin-password`) → mark availed → customer's screen updates in real time via socket.io.
 

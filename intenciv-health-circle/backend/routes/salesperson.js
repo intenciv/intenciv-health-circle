@@ -23,7 +23,7 @@ const { otpLimiter } = require('../middleware/rateLimit');
 const { signActivation, verify } = require('../utils/jwt');
 const { verifyPin } = require('../utils/passwords');
 const { couponCode } = require('../utils/cards');
-const authkey = require('../services/authkey');
+const datagen = require('../services/datagen');
 
 const router = express.Router();
 router.use(authenticate, requireRole('salesperson'));
@@ -108,9 +108,13 @@ router.post(
 
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      const gw = await authkey.sendOtp({ phone });
-      if (!gw || !gw.LogID) {
-        return res.status(502).json({ error: 'otp_gateway_failed', details: gw });
+      // Datagen is a plain SMS pipe: we generate and verify the OTP ourselves.
+      const otp     = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+
+      const gw = await datagen.sendOtp({ phone, otp });
+      if (!gw.ok) {
+        return res.status(502).json({ error: 'otp_gateway_failed', details: gw.raw });
       }
 
       await pool.execute(
@@ -120,7 +124,7 @@ router.post(
       await pool.execute(
         `INSERT INTO otp_log (id, phone, otp_hash, log_id, purpose, expires_at)
          VALUES (?, ?, ?, ?, 'activation', ?)`,
-        [uuidv4(), phone, '', gw.LogID, expiresAt]
+        [uuidv4(), phone, otpHash, gw.campaignId, expiresAt]
       );
 
       res.json({ ok: true, expires_in_seconds: 600 });
@@ -145,7 +149,7 @@ router.post(
       if (!phone) { await conn.rollback(); return res.status(400).json({ error: 'invalid_phone' }); }
 
       const [rows] = await conn.execute(
-        `SELECT id, log_id, attempts FROM otp_log
+        `SELECT id, otp_hash, attempts FROM otp_log
           WHERE phone = ? AND is_verified = 0 AND expires_at > NOW()
           ORDER BY created_at DESC LIMIT 1`,
         [phone]
@@ -158,8 +162,8 @@ router.post(
         return res.status(400).json({ error: 'otp_attempts_exhausted' });
       }
 
-      const verifyResult = await authkey.verifyOtp({ otp: req.body.otp, logId: otpRow.log_id });
-      if (!verifyResult || verifyResult.status !== true) {
+      const otpHash = crypto.createHash('sha256').update(String(req.body.otp)).digest('hex');
+      if (!otpRow.otp_hash || otpHash !== otpRow.otp_hash) {
         const next = otpRow.attempts + 1;
         await conn.execute(
           `UPDATE otp_log SET attempts = ?, is_verified = ? WHERE id = ?`,
@@ -308,7 +312,7 @@ router.post(
       await conn.commit();
 
       // Welcome SMS (best-effort).
-      authkey.sendWelcome({
+      datagen.sendWelcome({
         phone,
         tierName: plan.name,
         couponCount: couponsCreated.length,

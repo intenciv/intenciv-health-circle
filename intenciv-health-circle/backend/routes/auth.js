@@ -18,6 +18,7 @@ const { pool }                    = require('../config/db');
 const { signAccess, signRefresh, verify } = require('../utils/jwt');
 const { verifyPassword, verifyPin }       = require('../utils/passwords');
 const { sendOTP }                         = require('../utils/otp');
+const { HAS_ROLE_SQL, loginUser }         = require('../utils/roles');
 
 const router = express.Router();
 
@@ -65,9 +66,9 @@ router.post(
     if (!errors.isEmpty()) return bail(res, errors);
     try {
       const [rows] = await pool.execute(
-        `SELECT id, role, employee_id, email, full_name, password_hash, is_active
-           FROM users WHERE employee_id = ? AND role = 'admin' LIMIT 1`,
-        [req.body.employee_id.trim().toUpperCase()]
+        `SELECT id, role, roles, employee_id, email, full_name, password_hash, is_active
+           FROM users WHERE employee_id = ? AND ${HAS_ROLE_SQL} LIMIT 1`,
+        [req.body.employee_id.trim().toUpperCase(), 'admin']
       );
       if (rows.length === 0 || !rows[0].is_active)
         return res.status(401).json({ error: 'invalid_credentials' });
@@ -75,7 +76,7 @@ router.post(
       if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
       await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
-      const { password_hash, ...user } = rows[0];
+      const user = loginUser(rows[0], 'admin');
       res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
     } catch (e) { next(e); }
   }
@@ -98,9 +99,9 @@ router.post(
     if (!errors.isEmpty()) return bail(res, errors);
     try {
       const [rows] = await pool.execute(
-        `SELECT id, role, employee_id, email, full_name, password_hash, is_active
-           FROM users WHERE employee_id = ? AND role = 'reception' LIMIT 1`,
-        [req.body.employee_id.trim().toUpperCase()]
+        `SELECT id, role, roles, employee_id, email, full_name, password_hash, is_active
+           FROM users WHERE employee_id = ? AND ${HAS_ROLE_SQL} LIMIT 1`,
+        [req.body.employee_id.trim().toUpperCase(), 'reception']
       );
       if (rows.length === 0 || !rows[0].is_active || !rows[0].password_hash)
         return res.status(401).json({ error: 'invalid_credentials' });
@@ -108,7 +109,7 @@ router.post(
       if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
       await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
-      const { password_hash, ...user } = rows[0];
+      const user = loginUser(rows[0], 'reception');
       res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
     } catch (e) { next(e); }
   }
@@ -131,9 +132,9 @@ router.post(
 
       if (employee_id && password) {
         const [rows] = await pool.execute(
-          `SELECT id, role, employee_id, phone, full_name, password_hash, is_active
-             FROM users WHERE employee_id = ? AND role = 'salesperson' LIMIT 1`,
-          [String(employee_id).trim().toUpperCase()]
+          `SELECT id, role, roles, employee_id, phone, full_name, password_hash, is_active
+             FROM users WHERE employee_id = ? AND ${HAS_ROLE_SQL} LIMIT 1`,
+          [String(employee_id).trim().toUpperCase(), 'salesperson']
         );
         if (rows.length === 0 || !rows[0].is_active || !rows[0].password_hash)
           return res.status(401).json({ error: 'invalid_credentials' });
@@ -141,7 +142,7 @@ router.post(
         if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
         await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
-        const { password_hash, ...user } = rows[0];
+        const user = loginUser(rows[0], 'salesperson');
         return res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
       }
 
@@ -150,9 +151,9 @@ router.post(
         if (!phone) return res.status(400).json({ error: 'invalid_phone' });
 
         const [rows] = await pool.execute(
-          `SELECT id, role, phone, full_name, pin_hash, is_active
-             FROM users WHERE phone IN (?, ?) AND role = 'salesperson' LIMIT 1`,
-          phoneVariants(phone)
+          `SELECT id, role, roles, phone, full_name, pin_hash, is_active
+             FROM users WHERE phone IN (?, ?) AND ${HAS_ROLE_SQL} LIMIT 1`,
+          [...phoneVariants(phone), 'salesperson']
         );
         if (rows.length === 0 || !rows[0].is_active)
           return res.status(401).json({ error: 'invalid_credentials' });
@@ -160,7 +161,7 @@ router.post(
         if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
         await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
-        const { pin_hash, ...user } = rows[0];
+        const user = loginUser(rows[0], 'salesperson');
         return res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
       }
 

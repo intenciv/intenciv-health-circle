@@ -13,6 +13,7 @@ const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../config/db');
 const { authenticate, requireRole, requireAdminPassword } = require('../middleware/auth');
 const { hashPassword, hashPin, isValidPin, isValidPassword, verifyPassword } = require('../utils/passwords');
+const { HAS_ROLE_SQL, rolesOf, normaliseRoles } = require('../utils/roles');
 const { allocateCardSequences } = require('../utils/cards');
 const socket = require('../services/socket');
 
@@ -98,14 +99,16 @@ router.get('/dashboard', async (_req, res, next) => {
 router.get('/salespersons', async (_req, res, next) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT u.id, u.employee_id, u.full_name, u.phone, u.is_active, u.created_at, u.last_login,
+      `SELECT u.id, u.employee_id, u.full_name, u.phone, u.is_active, u.created_at, u.last_login, u.role, u.roles,
               (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND DATE(c.activated_at)=CURDATE())              AS today_count,
               (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND c.activated_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS week_count,
               (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND YEAR(c.activated_at)=YEAR(CURDATE()) AND MONTH(c.activated_at)=MONTH(CURDATE())) AS month_count,
               (SELECT COUNT(*) FROM cards c WHERE c.activated_by_salesperson = u.id AND c.status IN ('active','expired'))            AS total_count
-         FROM users u WHERE u.role = 'salesperson' ORDER BY u.full_name ASC`
+         FROM users u
+        WHERE FIND_IN_SET('salesperson', COALESCE(NULLIF(u.roles, ''), u.role)) > 0
+        ORDER BY u.full_name ASC`
     );
-    res.json({ salespersons: rows });
+    res.json({ salespersons: rows.map(r => ({ ...r, roles: rolesOf(r) })) });
   } catch (e) { next(e); }
 });
 
@@ -116,6 +119,7 @@ router.post(
   body('password').isString(),
   body('pin').isString(),
   body('phone').optional({ nullable: true }).isString(),
+  body('roles').optional().isArray(),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
@@ -139,15 +143,34 @@ router.post(
       const id = uuidv4();
       const passwordHash = await hashPassword(req.body.password);
       const pinHash = await hashPin(req.body.pin);
+      const roles = normaliseRoles(req.body.roles, 'salesperson');
       await pool.execute(
-        `INSERT INTO users (id, role, employee_id, phone, full_name, password_hash, pin_hash, is_active, created_at)
-         VALUES (?, 'salesperson', ?, ?, ?, ?, ?, 1, NOW())`,
-        [id, employeeId, phone, req.body.full_name, passwordHash, pinHash]
+        `INSERT INTO users (id, role, roles, employee_id, phone, full_name, password_hash, pin_hash, is_active, created_at)
+         VALUES (?, 'salesperson', ?, ?, ?, ?, ?, ?, 1, NOW())`,
+        [id, roles.join(','), employeeId, phone, req.body.full_name, passwordHash, pinHash]
       );
-      res.status(201).json({ id, employee_id: employeeId, phone, full_name: req.body.full_name });
+      res.status(201).json({ id, employee_id: employeeId, phone, full_name: req.body.full_name, roles });
     } catch (e) { next(e); }
   }
 );
+
+// Applying a roles[] change to an existing account. Keeps `role` (the primary
+// role, which the JWT and every guard use) pointing at a capability the person
+// still holds, and refuses to grant selling rights without an activation PIN.
+async function rolesUpdate(id, requestedRoles, bodyPin) {
+  const [cur] = await pool.execute('SELECT role, roles, pin_hash FROM users WHERE id = ? LIMIT 1', [id]);
+  if (cur.length === 0) return { error: 'not_found' };
+
+  const next = normaliseRoles(requestedRoles, null);
+  if (next.length === 0) return { error: 'roles_cannot_be_empty' };
+
+  if (next.includes('salesperson') && !cur[0].pin_hash && !isValidPin(bodyPin)) {
+    return { error: 'pin_required_for_salesperson' };
+  }
+  // Primary role must stay one the person actually holds.
+  const primary = next.includes(cur[0].role) ? cur[0].role : next[0];
+  return { roles: next.join(','), primary };
+}
 
 router.put(
   '/salespersons/:id',
@@ -156,6 +179,7 @@ router.put(
   body('employee_id').optional().isString(),
   body('password').optional().isString(),
   body('pin').optional().isString(),
+  body('roles').optional().isArray(),
   body('is_active').optional().isBoolean(),
   async (req, res, next) => {
     const errors = validationResult(req);
@@ -190,9 +214,15 @@ router.put(
       if (typeof req.body.is_active === 'boolean') {
         sets.push('is_active = ?'); params.push(req.body.is_active ? 1 : 0);
       }
+      if (req.body.roles) {
+        const r = await rolesUpdate(req.params.id, req.body.roles, req.body.pin);
+        if (r.error) return res.status(r.error === 'not_found' ? 404 : 400).json({ error: r.error });
+        sets.push('roles = ?'); params.push(r.roles);
+        sets.push('role = ?');  params.push(r.primary);
+      }
       if (sets.length === 0) return res.status(400).json({ error: 'nothing_to_update' });
       params.push(req.params.id);
-      await pool.execute(`UPDATE users SET ${sets.join(', ')} WHERE id = ? AND role = 'salesperson'`, params);
+      await pool.execute(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
       res.json({ ok: true });
     } catch (e) { next(e); }
   }
@@ -204,13 +234,30 @@ router.put(
 // stays intact, it just stops being attributed to a specific (now-gone)
 // person. Use PUT .../:id { is_active: false } instead if you just want to
 // deactivate someone without erasing the account.
+// "Remove" on a role page means: take away that capability. Only when it is
+// the person's last one does the account itself go. Without this, removing a
+// receptionist-who-also-sells from the Salespersons page would delete their
+// reception login too.
+async function revokeRoleOrDelete(id, role) {
+  const [cur] = await pool.execute('SELECT role, roles FROM users WHERE id = ? LIMIT 1', [id]);
+  if (cur.length === 0) return { found: false };
+
+  const held = rolesOf(cur[0]);
+  const left = held.filter(r => r !== role);
+  if (left.length === 0) {
+    await pool.execute('DELETE FROM users WHERE id = ?', [id]);
+    return { found: true, deleted: true };
+  }
+  const primary = left.includes(cur[0].role) ? cur[0].role : left[0];
+  await pool.execute('UPDATE users SET roles = ?, role = ? WHERE id = ?', [left.join(','), primary, id]);
+  return { found: true, deleted: false, roles: left };
+}
+
 router.delete('/salespersons/:id', async (req, res, next) => {
   try {
-    const [result] = await pool.execute(
-      `DELETE FROM users WHERE id = ? AND role = 'salesperson'`, [req.params.id]
-    );
-    if (result.affectedRows === 0) return res.status(404).json({ error: 'salesperson_not_found' });
-    res.json({ ok: true });
+    const r = await revokeRoleOrDelete(req.params.id, 'salesperson');
+    if (!r.found) return res.status(404).json({ error: 'salesperson_not_found' });
+    res.json({ ok: true, account_deleted: r.deleted, roles: r.roles || [] });
   } catch (e) { next(e); }
 });
 
@@ -227,10 +274,12 @@ router.delete('/salespersons/:id', async (req, res, next) => {
 router.get('/receptionists', async (_req, res, next) => {
   try {
     const [rows] = await pool.execute(
-      `SELECT id, employee_id, full_name, email, phone, is_active, created_at, last_login
-         FROM users WHERE role = 'reception' ORDER BY full_name ASC`
+      `SELECT id, employee_id, full_name, email, phone, is_active, created_at, last_login, role, roles
+         FROM users
+        WHERE FIND_IN_SET('reception', COALESCE(NULLIF(roles, ''), role)) > 0
+        ORDER BY full_name ASC`
     );
-    res.json({ receptionists: rows });
+    res.json({ receptionists: rows.map(r => ({ ...r, roles: rolesOf(r) })) });
   } catch (e) { next(e); }
 });
 
@@ -241,6 +290,8 @@ router.post(
   body('password').isString(),
   body('email').optional({ nullable: true }).isString(),
   body('phone').optional({ nullable: true }).isString(),
+  body('roles').optional().isArray(),
+  body('pin').optional().isString(),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
@@ -248,6 +299,12 @@ router.post(
       const employeeId = normaliseEmployeeId(req.body.employee_id);
       if (!EMPLOYEE_ID_RE.test(employeeId)) return res.status(400).json({ error: 'invalid_employee_id_format' });
       if (!isValidPassword(req.body.password)) return res.status(400).json({ error: 'weak_password' });
+
+      // Selling needs the 4-digit activation PIN; reception on its own does not.
+      const roles = normaliseRoles(req.body.roles, 'reception');
+      if (roles.includes('salesperson') && !isValidPin(req.body.pin)) {
+        return res.status(400).json({ error: 'pin_required_for_salesperson' });
+      }
 
       const [dupeId] = await pool.execute('SELECT id FROM users WHERE employee_id = ? LIMIT 1', [employeeId]);
       if (dupeId.length > 0) return res.status(409).json({ error: 'employee_id_already_in_use' });
@@ -269,12 +326,13 @@ router.post(
 
       const id = uuidv4();
       const passwordHash = await hashPassword(req.body.password);
+      const pinHash = roles.includes('salesperson') ? await hashPin(req.body.pin) : null;
       await pool.execute(
-        `INSERT INTO users (id, role, employee_id, email, phone, full_name, password_hash, is_active, created_at)
-         VALUES (?, 'reception', ?, ?, ?, ?, ?, 1, NOW())`,
-        [id, employeeId, email, phone, req.body.full_name, passwordHash]
+        `INSERT INTO users (id, role, roles, employee_id, email, phone, full_name, password_hash, pin_hash, is_active, created_at)
+         VALUES (?, 'reception', ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
+        [id, roles.join(','), employeeId, email, phone, req.body.full_name, passwordHash, pinHash]
       );
-      res.status(201).json({ id, employee_id: employeeId, email, phone, full_name: req.body.full_name });
+      res.status(201).json({ id, employee_id: employeeId, email, phone, full_name: req.body.full_name, roles });
     } catch (e) { next(e); }
   }
 );
@@ -287,6 +345,8 @@ router.put(
   body('email').optional({ nullable: true }).isString(),
   body('phone').optional({ nullable: true }).isString(),
   body('is_active').optional().isBoolean(),
+  body('roles').optional().isArray(),
+  body('pin').optional().isString(),
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
@@ -326,9 +386,18 @@ router.put(
       if (typeof req.body.is_active === 'boolean') {
         sets.push('is_active = ?'); params.push(req.body.is_active ? 1 : 0);
       }
+      if (req.body.pin && isValidPin(req.body.pin)) {
+        sets.push('pin_hash = ?'); params.push(await hashPin(req.body.pin));
+      }
+      if (req.body.roles) {
+        const rr = await rolesUpdate(req.params.id, req.body.roles, req.body.pin);
+        if (rr.error) return res.status(rr.error === 'not_found' ? 404 : 400).json({ error: rr.error });
+        sets.push('roles = ?'); params.push(rr.roles);
+        sets.push('role = ?');  params.push(rr.primary);
+      }
       if (sets.length === 0) return res.status(400).json({ error: 'nothing_to_update' });
       params.push(req.params.id);
-      const [r] = await pool.execute(`UPDATE users SET ${sets.join(', ')} WHERE id = ? AND role = 'reception'`, params);
+      const [r] = await pool.execute(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
       if (r.affectedRows === 0) return res.status(404).json({ error: 'receptionist_not_found' });
       res.json({ ok: true });
     } catch (e) { next(e); }
@@ -339,11 +408,9 @@ router.put(
 // the login. Use PUT .../:id { is_active: false } to suspend instead.
 router.delete('/receptionists/:id', async (req, res, next) => {
   try {
-    const [result] = await pool.execute(
-      `DELETE FROM users WHERE id = ? AND role = 'reception'`, [req.params.id]
-    );
-    if (result.affectedRows === 0) return res.status(404).json({ error: 'receptionist_not_found' });
-    res.json({ ok: true });
+    const r = await revokeRoleOrDelete(req.params.id, 'reception');
+    if (!r.found) return res.status(404).json({ error: 'receptionist_not_found' });
+    res.json({ ok: true, account_deleted: r.deleted, roles: r.roles || [] });
   } catch (e) { next(e); }
 });
 

@@ -11,7 +11,7 @@ export default function Salespersons() {
   const [list, setList]       = useState([]);
   const [err, setErr]         = useState('');
   const [open, setOpen]       = useState(null);
-  const [draft, setDraft]     = useState({ full_name: '', employee_id: '', phone: '', password: '', pin: '' });
+  const [draft, setDraft]     = useState({ full_name: '', employee_id: '', phone: '', password: '', pin: '', alsoReception: false });
   const [pinOpen, setPinOpen] = useState(null);
   const [newPin, setNewPin]   = useState('');
   const [pwOpen, setPwOpen]         = useState(null);
@@ -27,9 +27,12 @@ export default function Salespersons() {
   async function create() {
     setSaving(true); setErr('');
     try {
-      await api.post('/admin/salespersons', draft);
+      await api.post('/admin/salespersons', {
+        ...draft,
+        roles: draft.alsoReception ? ['salesperson', 'reception'] : ['salesperson'],
+      });
       setOpen(null);
-      setDraft({ full_name: '', employee_id: '', phone: '', password: '', pin: '' });
+      setDraft({ full_name: '', employee_id: '', phone: '', password: '', pin: '', alsoReception: false });
       load();
     }
     catch (e) { setErr(e.response?.data?.error || 'Failed'); }
@@ -37,7 +40,10 @@ export default function Salespersons() {
   }
   async function update(sp) {
     try {
-      await api.put(`/admin/salespersons/${sp.id}`, { full_name: sp.full_name, phone: sp.phone, employee_id: sp.employee_id });
+      await api.put(`/admin/salespersons/${sp.id}`, {
+        full_name: sp.full_name, phone: sp.phone, employee_id: sp.employee_id,
+        roles: sp.alsoReception ? ['salesperson', 'reception'] : ['salesperson'],
+      });
       setOpen(null); load();
     }
     catch (e) { setErr(e.response?.data?.error || 'Failed'); }
@@ -84,7 +90,7 @@ export default function Salespersons() {
         <tbody>
           {list.map(s => (
             <tr key={s.id}>
-              <td>{s.full_name}</td>
+              <td>{s.full_name}{(s.roles || []).includes('reception') && <span className="pill pill-active" style={{ marginLeft: 8 }}>Also reception</span>}</td>
               <td className="mono">{s.employee_id || '—'}</td>
               <td className="mono">{s.phone || '—'}</td>
               <td>{s.today_count}</td>
@@ -98,7 +104,7 @@ export default function Salespersons() {
                 </span>
               </td>
               <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <button className="secondary" onClick={() => setOpen({ ...s })}>Edit</button>
+                <button className="secondary" onClick={() => setOpen({ ...s, alsoReception: (s.roles || []).includes('reception') })}>Edit</button>
                 <button className="secondary" onClick={() => setPwOpen(s)}>Reset Password</button>
                 <button className="secondary" onClick={() => setPinOpen(s)}>Reset Activation PIN</button>
                 <button className="secondary" onClick={() => toggle(s)}>{s.is_active ? 'Disable' : 'Enable'}</button>
@@ -144,7 +150,7 @@ export default function Salespersons() {
             )}
 
             <div className="sp-card-actions">
-              <button className="secondary" onClick={() => setOpen({ ...s })}>Edit</button>
+              <button className="secondary" onClick={() => setOpen({ ...s, alsoReception: (s.roles || []).includes('reception') })}>Edit</button>
               <button className="secondary" onClick={() => setPwOpen(s)}>Reset Password</button>
               <button className="secondary" onClick={() => setPinOpen(s)}>Reset Activation PIN</button>
               <button className="secondary" onClick={() => toggle(s)}>{s.is_active ? 'Disable' : 'Enable'}</button>
@@ -182,6 +188,18 @@ export default function Salespersons() {
 
           <label className="label">4-digit activation PIN <span style={{ color: 'var(--text-mid)', fontWeight: 400 }}>(separate from the password — used to authorize each card activation)</span></label>
           <input value={draft.pin} onChange={e => setDraft({ ...draft, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })} maxLength={4} type="password" />
+
+          <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14 }}>
+            <input type="checkbox" checked={draft.alsoReception} style={{ width: 'auto' }}
+              onChange={e => setDraft({ ...draft, alsoReception: e.target.checked })} />
+            Can also work the reception desk
+          </label>
+          {draft.alsoReception && (
+            <p style={{ color: 'var(--text-mid)', fontSize: 13, margin: '4px 0 0' }}>
+              They will be able to sign in through the Reception tab as well, using the same
+              Employee ID and password, and will appear on the Reception Staff page too.
+            </p>
+          )}
         </Dialog>
       )}
 
@@ -199,6 +217,12 @@ export default function Salespersons() {
 
           <label className="label">Mobile number <span style={{ color: 'var(--text-mid)', fontWeight: 400 }}>(optional, contact only)</span></label>
           <input value={open.phone || ''} onChange={e => setOpen({ ...open, phone: e.target.value })} />
+
+          <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14 }}>
+            <input type="checkbox" checked={!!open.alsoReception} style={{ width: 'auto' }}
+              onChange={e => setOpen({ ...open, alsoReception: e.target.checked })} />
+            Can also work the reception desk
+          </label>
         </Dialog>
       )}
 

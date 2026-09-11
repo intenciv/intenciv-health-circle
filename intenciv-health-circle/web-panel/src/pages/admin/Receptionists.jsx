@@ -15,7 +15,7 @@ export default function Receptionists() {
   const [list, setList]   = useState([]);
   const [err, setErr]     = useState('');
   const [open, setOpen]   = useState(null);
-  const [draft, setDraft] = useState({ full_name: '', employee_id: '', email: '', phone: '', password: '' });
+  const [draft, setDraft] = useState({ full_name: '', employee_id: '', email: '', phone: '', password: '', alsoSells: false, pin: '' });
   const [pwOpen, setPwOpen]           = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving]           = useState(false);
@@ -29,9 +29,13 @@ export default function Receptionists() {
   async function create() {
     setSaving(true); setErr('');
     try {
-      await api.post('/admin/receptionists', draft);
+      await api.post('/admin/receptionists', {
+        ...draft,
+        roles: draft.alsoSells ? ['reception', 'salesperson'] : ['reception'],
+        pin: draft.alsoSells ? draft.pin : undefined,
+      });
       setOpen(null);
-      setDraft({ full_name: '', employee_id: '', email: '', phone: '', password: '' });
+      setDraft({ full_name: '', employee_id: '', email: '', phone: '', password: '', alsoSells: false, pin: '' });
       load();
     }
     catch (e) { setErr(e.response?.data?.error || 'Failed'); }
@@ -41,6 +45,8 @@ export default function Receptionists() {
     try {
       await api.put(`/admin/receptionists/${r.id}`, {
         full_name: r.full_name, employee_id: r.employee_id, email: r.email, phone: r.phone,
+        roles: r.alsoSells ? ['reception', 'salesperson'] : ['reception'],
+        pin: r.alsoSells && r.pin ? r.pin : undefined,
       });
       setOpen(null); load();
     }
@@ -92,7 +98,7 @@ export default function Receptionists() {
         <tbody>
           {list.map(r => (
             <tr key={r.id}>
-              <td>{r.full_name}</td>
+              <td>{r.full_name}{(r.roles || []).includes('salesperson') && <span className="pill pill-active" style={{ marginLeft: 8 }}>Also sells</span>}</td>
               <td className="mono">{r.employee_id || '—'}</td>
               <td>{r.email || '—'}</td>
               <td className="mono">{r.phone || '—'}</td>
@@ -103,7 +109,7 @@ export default function Receptionists() {
                 </span>
               </td>
               <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <button className="secondary" onClick={() => setOpen({ ...r })}>Edit</button>
+                <button className="secondary" onClick={() => setOpen({ ...r, alsoSells: (r.roles || []).includes('salesperson'), pin: '' })}>Edit</button>
                 <button className="secondary" onClick={() => setPwOpen(r)}>Reset Password</button>
                 <button className="secondary" onClick={() => toggle(r)}>{r.is_active ? 'Disable' : 'Enable'}</button>
                 <button className="danger"    onClick={() => remove(r)}>Remove</button>
@@ -141,7 +147,7 @@ export default function Receptionists() {
             )}
 
             <div className="sp-card-actions">
-              <button className="secondary" onClick={() => setOpen({ ...r })}>Edit</button>
+              <button className="secondary" onClick={() => setOpen({ ...r, alsoSells: (r.roles || []).includes('salesperson'), pin: '' })}>Edit</button>
               <button className="secondary" onClick={() => setPwOpen(r)}>Reset Password</button>
               <button className="secondary" onClick={() => toggle(r)}>{r.is_active ? 'Disable' : 'Enable'}</button>
               <button className="danger"    onClick={() => remove(r)}>Remove</button>
@@ -157,6 +163,7 @@ export default function Receptionists() {
             !draft.full_name
             || !EMPLOYEE_ID_RE.test((draft.employee_id || '').toUpperCase())
             || !isStrongPassword(draft.password)
+            || (draft.alsoSells && !/^\d{4}$/.test(draft.pin))
           }>
           <label className="label">Full name</label>
           <input value={draft.full_name} onChange={e => setDraft({ ...draft, full_name: e.target.value })} />
@@ -177,6 +184,23 @@ export default function Receptionists() {
 
           <label className="label">Password (min 8 characters, 1 capital, 1 numeral, 1 special character)</label>
           <input value={draft.password} onChange={e => setDraft({ ...draft, password: e.target.value })} type="password" placeholder="••••••••" />
+
+          <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14 }}>
+            <input type="checkbox" checked={draft.alsoSells} style={{ width: 'auto' }}
+              onChange={e => setDraft({ ...draft, alsoSells: e.target.checked })} />
+            Can also sell memberships
+          </label>
+          {draft.alsoSells && (
+            <>
+              <p style={{ color: 'var(--text-mid)', fontSize: 13, margin: '4px 0 8px' }}>
+                They will be able to sign in through the Salesperson tab as well, using the same
+                Employee ID and password. Selling needs a 4-digit PIN to authorise each activation.
+              </p>
+              <label className="label">4-digit activation PIN</label>
+              <input value={draft.pin} maxLength={4} type="password"
+                onChange={e => setDraft({ ...draft, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })} />
+            </>
+          )}
         </Dialog>
       )}
 
@@ -199,6 +223,22 @@ export default function Receptionists() {
 
           <label className="label">Mobile number <span style={{ color: 'var(--text-mid)', fontWeight: 400 }}>(optional, contact only)</span></label>
           <input value={open.phone || ''} onChange={e => setOpen({ ...open, phone: e.target.value })} />
+
+          <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14 }}>
+            <input type="checkbox" checked={!!open.alsoSells} style={{ width: 'auto' }}
+              onChange={e => setOpen({ ...open, alsoSells: e.target.checked })} />
+            Can also sell memberships
+          </label>
+          {open.alsoSells && (
+            <>
+              <p style={{ color: 'var(--text-mid)', fontSize: 13, margin: '4px 0 8px' }}>
+                Selling needs a 4-digit activation PIN. Leave blank to keep the one they already have.
+              </p>
+              <label className="label">4-digit activation PIN</label>
+              <input value={open.pin || ''} maxLength={4} type="password"
+                onChange={e => setOpen({ ...open, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })} />
+            </>
+          )}
         </Dialog>
       )}
 

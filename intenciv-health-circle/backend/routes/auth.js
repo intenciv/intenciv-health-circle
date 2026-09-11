@@ -82,6 +82,19 @@ router.post(
 );
 
 // ── RECEPTION ─────────────────────────────────────────────────────────────────
+// Accepts an Employee ID *or* an email address in the same field.
+//
+// Reception accounts predate the Employee ID login model: they were created
+// by hand in SQL on 2026-06-22, back when this route authenticated on email
+// (commit ca0a60b), and there has never been an endpoint or admin screen that
+// creates a reception user — so nothing ever required an employee_id of them.
+// When login moved to employee_id, migration 006 was supposed to backfill one,
+// but it was never run in production, leaving both accounts with
+// employee_id IS NULL and therefore unable to match a lookup keyed on it: a
+// permanent 401 that looks exactly like a wrong password.
+//
+// Matching either identifier lets those accounts sign in with the credentials
+// they already have, and keeps working once employee_ids are assigned.
 router.post(
   '/reception/login',
   body('employee_id').isString().notEmpty(),
@@ -90,12 +103,15 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) return bail(res, errors);
     try {
+      const identifier = req.body.employee_id.trim();
       const [rows] = await pool.execute(
         `SELECT id, role, employee_id, email, full_name, password_hash, is_active
-           FROM users WHERE employee_id = ? AND role = 'reception' LIMIT 1`,
-        [req.body.employee_id.trim().toUpperCase()]
+           FROM users
+          WHERE role = 'reception' AND (employee_id = ? OR email = ?)
+          LIMIT 1`,
+        [identifier.toUpperCase(), identifier.toLowerCase()]
       );
-      if (rows.length === 0 || !rows[0].is_active)
+      if (rows.length === 0 || !rows[0].is_active || !rows[0].password_hash)
         return res.status(401).json({ error: 'invalid_credentials' });
       const ok = await verifyPassword(req.body.password, rows[0].password_hash);
       if (!ok) return res.status(401).json({ error: 'invalid_credentials' });

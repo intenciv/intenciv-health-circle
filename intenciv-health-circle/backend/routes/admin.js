@@ -129,15 +129,29 @@ router.post(
       if (!isValidPassword(req.body.password)) return res.status(400).json({ error: 'weak_password' });
       if (!isValidPin(req.body.pin)) return res.status(400).json({ error: 'pin_must_be_4_digits' });
 
-      const [dupeId] = await pool.execute('SELECT id FROM users WHERE employee_id = ? LIMIT 1', [employeeId]);
-      if (dupeId.length > 0) return res.status(409).json({ error: 'employee_id_already_in_use' });
+      const [dupeId] = await pool.execute(
+        'SELECT id, full_name, role, roles FROM users WHERE employee_id = ? LIMIT 1', [employeeId]
+      );
+      if (dupeId.length > 0) {
+        return res.status(409).json({
+          error: 'employee_id_already_in_use',
+          existing: { id: dupeId[0].id, full_name: dupeId[0].full_name, roles: rolesOf(dupeId[0]) },
+        });
+      }
 
       let phone = null;
       if (req.body.phone) {
         phone = normalisePhone(req.body.phone);
         if (!phone) return res.status(400).json({ error: 'invalid_phone' });
-        const [dupePhone] = await pool.execute('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
-        if (dupePhone.length > 0) return res.status(409).json({ error: 'phone_already_in_use' });
+        const [dupePhone] = await pool.execute(
+          'SELECT id, full_name, role, roles FROM users WHERE phone = ? LIMIT 1', [phone]
+        );
+        if (dupePhone.length > 0) {
+          return res.status(409).json({
+            error: 'phone_already_in_use',
+            existing: { id: dupePhone[0].id, full_name: dupePhone[0].full_name, roles: rolesOf(dupePhone[0]) },
+          });
+        }
       }
 
       const id = uuidv4();
@@ -306,8 +320,20 @@ router.post(
         return res.status(400).json({ error: 'pin_required_for_salesperson' });
       }
 
-      const [dupeId] = await pool.execute('SELECT id FROM users WHERE employee_id = ? LIMIT 1', [employeeId]);
-      if (dupeId.length > 0) return res.status(409).json({ error: 'employee_id_already_in_use' });
+      // Someone who already has an account (typically a salesperson being
+      // given the reception desk as well) must be granted the extra role, not
+      // created a second time — the UNIQUE constraints on employee_id / phone /
+      // email make a duplicate row impossible anyway. Return enough context for
+      // the panel to offer that as a one-click action.
+      const [dupeId] = await pool.execute(
+        'SELECT id, full_name, role, roles FROM users WHERE employee_id = ? LIMIT 1', [employeeId]
+      );
+      if (dupeId.length > 0) {
+        return res.status(409).json({
+          error: 'employee_id_already_in_use',
+          existing: { id: dupeId[0].id, full_name: dupeId[0].full_name, roles: rolesOf(dupeId[0]) },
+        });
+      }
 
       let email = null;
       if (req.body.email) {
@@ -320,8 +346,15 @@ router.post(
       if (req.body.phone) {
         phone = normalisePhone(req.body.phone);
         if (!phone) return res.status(400).json({ error: 'invalid_phone' });
-        const [dupePhone] = await pool.execute('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
-        if (dupePhone.length > 0) return res.status(409).json({ error: 'phone_already_in_use' });
+        const [dupePhone] = await pool.execute(
+          'SELECT id, full_name, role, roles FROM users WHERE phone = ? LIMIT 1', [phone]
+        );
+        if (dupePhone.length > 0) {
+          return res.status(409).json({
+            error: 'phone_already_in_use',
+            existing: { id: dupePhone[0].id, full_name: dupePhone[0].full_name, roles: rolesOf(dupePhone[0]) },
+          });
+        }
       }
 
       const id = uuidv4();

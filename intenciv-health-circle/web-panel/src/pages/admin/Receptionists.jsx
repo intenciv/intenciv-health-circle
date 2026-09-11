@@ -19,6 +19,7 @@ export default function Receptionists() {
   const [pwOpen, setPwOpen]           = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving]           = useState(false);
+  const [existing, setExisting]       = useState(null);
 
   async function load() {
     try { const { data } = await api.get('/admin/receptionists'); setList(data.receptionists); }
@@ -38,7 +39,26 @@ export default function Receptionists() {
       setDraft({ full_name: '', employee_id: '', email: '', phone: '', password: '', alsoSells: false, pin: '' });
       load();
     }
-    catch (e) { setErr(e.response?.data?.error || 'Failed'); }
+    catch (e) {
+      const d = e.response?.data;
+      // Already has an account — offer to add reception to it instead.
+      if (d?.existing) { setExisting(d.existing); setErr(''); }
+      else setErr(d?.error || 'Failed');
+    }
+    finally { setSaving(false); }
+  }
+
+  async function grantReception() {
+    setSaving(true); setErr('');
+    try {
+      await api.put(`/admin/salespersons/${existing.id}`, {
+        roles: [...new Set([...(existing.roles || []), 'reception'])],
+      });
+      setExisting(null); setOpen(null);
+      setDraft({ full_name: '', employee_id: '', email: '', phone: '', password: '', alsoSells: false, pin: '' });
+      load();
+    }
+    catch (e) { setErr(e.response?.data?.error || 'Failed to grant reception access'); }
     finally { setSaving(false); }
   }
   async function update(r) {
@@ -157,6 +177,20 @@ export default function Receptionists() {
       </div>
 
       {/* ── Dialogs ── */}
+      {existing && (
+        <Dialog title="This person already has an account"
+          onClose={() => setExisting(null)} onSave={grantReception} saving={saving}>
+          <p style={{ marginBottom: 10 }}>
+            <strong>{existing.full_name}</strong> already signs in
+            as {(existing.roles || []).join(' and ') || 'a staff member'}.
+          </p>
+          <p style={{ color: 'var(--text-mid)' }}>
+            One person has one account, so instead of creating a second login, save to add
+            reception access to the account they already have. They keep the same Employee ID
+            and password, and will be able to sign in through the Reception tab as well.
+          </p>
+        </Dialog>
+      )}
       {open === 'new' && (
         <Dialog title="Add reception account" onClose={() => setOpen(null)} onSave={create} saving={saving}
           disabled={

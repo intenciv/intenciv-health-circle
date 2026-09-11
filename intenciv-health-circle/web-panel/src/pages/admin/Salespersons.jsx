@@ -17,6 +17,7 @@ export default function Salespersons() {
   const [pwOpen, setPwOpen]         = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving]   = useState(false);
+  const [existing, setExisting] = useState(null);
 
   async function load() {
     try { const { data } = await api.get('/admin/salespersons'); setList(data.salespersons); }
@@ -35,7 +36,27 @@ export default function Salespersons() {
       setDraft({ full_name: '', employee_id: '', phone: '', password: '', pin: '', alsoReception: false });
       load();
     }
-    catch (e) { setErr(e.response?.data?.error || 'Failed'); }
+    catch (e) {
+      const d = e.response?.data;
+      if (d?.existing) { setExisting(d.existing); setErr(''); }
+      else setErr(d?.error || 'Failed');
+    }
+    finally { setSaving(false); }
+  }
+
+  async function grantSalesperson() {
+    if (!/^\d{4}$/.test(draft.pin)) { setErr('Enter a 4-digit activation PIN first.'); return; }
+    setSaving(true); setErr('');
+    try {
+      await api.put(`/admin/receptionists/${existing.id}`, {
+        roles: [...new Set([...(existing.roles || []), 'salesperson'])],
+        pin: draft.pin,
+      });
+      setExisting(null); setOpen(null);
+      setDraft({ full_name: '', employee_id: '', phone: '', password: '', pin: '', alsoReception: false });
+      load();
+    }
+    catch (e) { setErr(e.response?.data?.error || 'Failed to grant selling access'); }
     finally { setSaving(false); }
   }
   async function update(sp) {
@@ -161,6 +182,24 @@ export default function Salespersons() {
       </div>
 
       {/* ── Dialogs ── */}
+      {existing && (
+        <Dialog title="This person already has an account"
+          onClose={() => setExisting(null)} onSave={grantSalesperson} saving={saving}
+          disabled={!/^\d{4}$/.test(draft.pin)}>
+          <p style={{ marginBottom: 10 }}>
+            <strong>{existing.full_name}</strong> already signs in
+            as {(existing.roles || []).join(' and ') || 'a staff member'}.
+          </p>
+          <p style={{ color: 'var(--text-mid)', marginBottom: 12 }}>
+            One person has one account, so instead of creating a second login, save to add
+            selling access to the account they already have. They keep the same Employee ID
+            and password, and will be able to sign in through the Salesperson tab as well.
+          </p>
+          <label className="label">4-digit activation PIN <span style={{ color: 'var(--text-mid)', fontWeight: 400 }}>(needed to authorize each card activation)</span></label>
+          <input value={draft.pin} maxLength={4} type="password"
+            onChange={e => setDraft({ ...draft, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })} />
+        </Dialog>
+      )}
       {open === 'new' && (
         <Dialog title="Add salesperson" onClose={() => setOpen(null)} onSave={create} saving={saving}
           disabled={

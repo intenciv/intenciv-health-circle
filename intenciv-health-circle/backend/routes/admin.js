@@ -423,15 +423,30 @@ router.put('/cards/:id/assign', body('salesperson_id').isString().notEmpty(), as
 // Does NOT touch the customer's coupons or account - "roll back the
 // card" and "remove the client details" were confirmed as two distinct
 // actions (see DELETE /customers/:id below for the latter).
+// Rolling a card back must also delete the coupons that activation issued.
+// Coupon codes are deterministic from cards.card_seq (utils/cards.js:
+// IHC-CPN-<card_seq>-<benefit><n>), so coupons left behind by a rollback
+// collide with the identical codes the next activation generates, and the
+// card can never be activated again — it fails with ER_DUP_ENTRY on
+// coupons.uq_coupons_code. DELETE /customers/:id already deletes coupons
+// for this reason; this path did not, which stranded cards permanently.
+//
+// Both statements run in one transaction so a card can never be reset with
+// its coupons still present (the state this is fixing).
 router.post('/cards/:id/rollback', requireAdminPassword, async (req, res, next) => {
+  const conn = await pool.getConnection();
   try {
-    const [rows] = await pool.execute(
+    await conn.beginTransaction();
+    const [rows] = await conn.execute(
       `SELECT id, status FROM cards WHERE id = ? LIMIT 1`,
       [req.params.id]
     );
-    if (rows.length === 0) return res.status(404).json({ error: 'card_not_found' });
-    if (rows[0].status === 'unused') return res.status(409).json({ error: 'card_already_unused' });
-    const [r] = await pool.execute(
+    if (rows.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'card_not_found' }); }
+    if (rows[0].status === 'unused') { await conn.rollback(); return res.status(409).json({ error: 'card_already_unused' }); }
+
+    const [del] = await conn.execute(`DELETE FROM coupons WHERE card_id = ?`, [req.params.id]);
+
+    const [r] = await conn.execute(
       `UPDATE cards
           SET status = 'unused',
               assigned_to_salesperson = NULL,
@@ -443,9 +458,14 @@ router.post('/cards/:id/rollback', requireAdminPassword, async (req, res, next) 
         WHERE id = ?`,
       [req.params.id]
     );
-    if (r.affectedRows === 0) return res.status(409).json({ error: 'card_rollback_failed' });
-    res.json({ ok: true });
-  } catch (e) { next(e); }
+    if (r.affectedRows === 0) { await conn.rollback(); return res.status(409).json({ error: 'card_rollback_failed' }); }
+
+    await conn.commit();
+    res.json({ ok: true, coupons_deleted: del.affectedRows });
+  } catch (e) {
+    await conn.rollback().catch(() => {});
+    next(e);
+  } finally { conn.release(); }
 });
 
 // Permanently delete a customer's account and all their data - password-

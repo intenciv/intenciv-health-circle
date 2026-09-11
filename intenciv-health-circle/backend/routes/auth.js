@@ -3,7 +3,8 @@
  *
  *   POST /auth/admin/login                { employee_id, password } → tokens
  *   POST /auth/reception/login            { employee_id, password } → tokens
- *   POST /auth/salesperson/login          { phone, pin }        → tokens
+ *   POST /auth/salesperson/login          { employee_id, password } → tokens
+ *                                         (or legacy { phone, pin })
  *   POST /auth/customer/login             { phone }             → tokens (no OTP, legacy)
  *   POST /auth/customer/send-otp          { phone }             → sends OTP via Datagen
  *   POST /auth/customer/verify-otp        { phone, otp }        → tokens
@@ -107,30 +108,59 @@ router.post(
 );
 
 // ── SALESPERSON ───────────────────────────────────────────────────────────────
+// Accepts two shapes. The web panel signs all three panel roles in with
+// Employee ID + password (web-panel/src/pages/Login.jsx, migration 006), which
+// is why a phone+PIN-only route rejected every salesperson login from the
+// panel before reaching the credential check. The older phone + 4-digit PIN
+// shape is still honoured so any client still sending it keeps working.
+//
+// The 4-digit PIN remains the authorisation for each card activation in the
+// field (see routes/salesperson.js) — a separate control from signing in.
 router.post(
   '/salesperson/login',
-  body('phone').isString().notEmpty(),
-  body('pin').isString().isLength({ min: 4, max: 4 }),
   async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return bail(res, errors);
     try {
-      const phone = normalisePhone(req.body.phone);
-      if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+      const { employee_id, password, phone: rawPhone, pin } = req.body || {};
 
-      const [rows] = await pool.execute(
-        `SELECT id, role, phone, full_name, pin_hash, is_active
-           FROM users WHERE phone IN (?, ?) AND role = 'salesperson' LIMIT 1`,
-        phoneVariants(phone)
-      );
-      if (rows.length === 0 || !rows[0].is_active)
-        return res.status(401).json({ error: 'invalid_credentials' });
-      const ok = await verifyPin(req.body.pin, rows[0].pin_hash);
-      if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+      if (employee_id && password) {
+        const [rows] = await pool.execute(
+          `SELECT id, role, employee_id, phone, full_name, password_hash, is_active
+             FROM users WHERE employee_id = ? AND role = 'salesperson' LIMIT 1`,
+          [String(employee_id).trim().toUpperCase()]
+        );
+        if (rows.length === 0 || !rows[0].is_active || !rows[0].password_hash)
+          return res.status(401).json({ error: 'invalid_credentials' });
+        const ok = await verifyPassword(password, rows[0].password_hash);
+        if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
-      await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
-      const { pin_hash, ...user } = rows[0];
-      res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
+        await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
+        const { password_hash, ...user } = rows[0];
+        return res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
+      }
+
+      if (rawPhone && pin) {
+        const phone = normalisePhone(rawPhone);
+        if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+
+        const [rows] = await pool.execute(
+          `SELECT id, role, phone, full_name, pin_hash, is_active
+             FROM users WHERE phone IN (?, ?) AND role = 'salesperson' LIMIT 1`,
+          phoneVariants(phone)
+        );
+        if (rows.length === 0 || !rows[0].is_active)
+          return res.status(401).json({ error: 'invalid_credentials' });
+        const ok = await verifyPin(pin, rows[0].pin_hash);
+        if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+
+        await pool.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [rows[0].id]);
+        const { pin_hash, ...user } = rows[0];
+        return res.json({ access_token: signAccess(user), refresh_token: signRefresh(user), user });
+      }
+
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: 'Provide employee_id + password, or phone + pin.',
+      });
     } catch (e) { next(e); }
   }
 );

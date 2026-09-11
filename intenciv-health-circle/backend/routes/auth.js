@@ -42,6 +42,18 @@ function normalisePhone(raw) {
   return null;
 }
 
+/**
+ * The users table is not consistent about phone format: most rows are
+ * +91XXXXXXXXXX but some were written as a bare 10-digit number, and those
+ * could never match a normalised lookup — that customer got
+ * mobile_not_registered forever. Lookups therefore match both spellings.
+ * Anything written by this file still uses the normalised (+91) form.
+ */
+function phoneVariants(normalised) {
+  const local = String(normalised).slice(-10);
+  return [normalised, local];
+}
+
 // ── ADMIN ────────────────────────────────────────────────────────────────────
 router.post(
   '/admin/login',
@@ -108,8 +120,8 @@ router.post(
 
       const [rows] = await pool.execute(
         `SELECT id, role, phone, full_name, pin_hash, is_active
-           FROM users WHERE phone = ? AND role = 'salesperson' LIMIT 1`,
-        [phone]
+           FROM users WHERE phone IN (?, ?) AND role = 'salesperson' LIMIT 1`,
+        phoneVariants(phone)
       );
       if (rows.length === 0 || !rows[0].is_active)
         return res.status(401).json({ error: 'invalid_credentials' });
@@ -137,9 +149,9 @@ router.post(
       const [rows] = await pool.execute(
         `SELECT u.id, u.role, u.phone, u.full_name, u.is_active
            FROM users u
-          WHERE u.phone = ? AND u.role = 'customer' AND u.is_active = 1
+          WHERE u.phone IN (?, ?) AND u.role = 'customer' AND u.is_active = 1
           LIMIT 1`,
-        [phone]
+        phoneVariants(phone)
       );
       if (rows.length === 0) {
         return res.status(404).json({
@@ -174,8 +186,8 @@ router.post(
       // Check registered active customer
       const [rows] = await pool.execute(
         `SELECT id FROM users
-          WHERE phone = ? AND role = 'customer' AND is_active = 1 LIMIT 1`,
-        [phone]
+          WHERE phone IN (?, ?) AND role = 'customer' AND is_active = 1 LIMIT 1`,
+        phoneVariants(phone)
       );
       if (rows.length === 0) {
         return res.status(404).json({
@@ -263,8 +275,8 @@ router.post(
 
       const [users] = await pool.execute(
         `SELECT id, role, phone, full_name, is_active
-           FROM users WHERE phone = ? AND role = 'customer' LIMIT 1`,
-        [phone]
+           FROM users WHERE phone IN (?, ?) AND role = 'customer' LIMIT 1`,
+        phoneVariants(phone)
       );
       if (users.length === 0) return res.status(404).json({ error: 'user_not_found' });
 

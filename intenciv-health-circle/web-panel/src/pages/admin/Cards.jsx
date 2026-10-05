@@ -52,6 +52,15 @@ function ConfirmWithPassword({ title, body, confirmLabel, danger, onConfirm, onC
   );
 }
 
+// A card that is not active but still carries coupons is stranded: coupon codes
+// are deterministic from the card number, so the leftovers from a previous sale
+// collide with the ones the next activation generates and the sale fails with a
+// duplicate-key error. Rollback clears them; it just was not offered here,
+// because the button was shown for active cards only.
+function isStranded(c) {
+  return c.status !== 'active' && Number(c.coupon_count || 0) > 0;
+}
+
 export default function Cards() {
   const [cards, setCards]   = useState([]);
   const [plans, setPlans]   = useState([]);
@@ -173,13 +182,21 @@ export default function Cards() {
               <td>{c.plan_name}</td>
               <td>{c.salesperson_name || <span style={{ color: 'var(--text-mid)' }}>Unassigned</span>}</td>
               <td>{c.customer_name ? <>{c.customer_name}<br /><span style={{ color: 'var(--text-mid)', fontSize: 12 }} className="mono">{c.customer_phone}</span></> : '—'}</td>
-              <td><span className={`pill ${statusColor(c.status)}`}>{c.status.toUpperCase()}</span></td>
+              <td>
+                <span className={`pill ${statusColor(c.status)}`}>{c.status.toUpperCase()}</span>
+                {isStranded(c) && (
+                  <div style={{ color: 'var(--danger, #c0392b)', fontSize: 11, marginTop: 4 }}>
+                    ⚠ {c.coupon_count} old coupons — cannot be sold until cleared
+                  </div>
+                )}
+              </td>
               <td>{c.activated_at ? new Date(c.activated_at).toLocaleDateString() : '—'}</td>
               <td>{c.expires_at ? new Date(c.expires_at).toLocaleDateString() : '—'}</td>
               <td>{c.amount_paid ? `₹${Number(c.amount_paid).toFixed(0)}` : '—'}</td>
               <td style={{ display: 'flex', gap: 8 }}>
                 {['unused', 'assigned'].includes(c.status) && <button className="secondary" onClick={() => setOpenAssign(c)}>Assign</button>}
                 {c.status === 'active' && <button className="secondary" onClick={() => setRollbackTarget(c)}>Rollback</button>}
+                {isStranded(c) && <button className="danger" onClick={() => setRollbackTarget(c)}>Clear old coupons</button>}
                 {c.status === 'active' && c.customer_id && <button className="danger" onClick={() => setDeleteTarget(c)}>Delete Client</button>}
               </td>
             </tr>
@@ -207,8 +224,16 @@ export default function Cards() {
               {c.expires_at    && <div className="c-card-row"><span>Expires</span><span>{new Date(c.expires_at).toLocaleDateString()}</span></div>}
               {c.amount_paid   && <div className="c-card-row"><span>Amount</span><span>₹{Number(c.amount_paid).toFixed(0)}</span></div>}
             </div>
+            {isStranded(c) && (
+              <div style={{ color: 'var(--danger, #c0392b)', fontSize: 12, marginTop: 10 }}>
+                ⚠ {c.coupon_count} old coupons from a previous sale — this card cannot be sold until they are cleared.
+              </div>
+            )}
             {['unused', 'assigned'].includes(c.status) && (
               <button className="secondary" onClick={() => setOpenAssign(c)} style={{ marginTop: 12, width: '100%' }}>Assign</button>
+            )}
+            {isStranded(c) && (
+              <button className="danger" onClick={() => setRollbackTarget(c)} style={{ marginTop: 8, width: '100%' }}>Clear old coupons</button>
             )}
             {c.status === 'active' && (
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -268,7 +293,13 @@ export default function Cards() {
       {rollbackTarget && (
         <ConfirmWithPassword
           title={`Roll back ${rollbackTarget.card_number}?`}
-          body={`This permanently undoes the activation. ${rollbackTarget.customer_name || 'The customer'} will be unlinked from this card and lose access — activation date, amount paid, and coupon usage tied to this specific activation cannot be recovered. The card itself becomes reusable.`}
+          body={
+            rollbackTarget.status === 'active'
+              ? `This permanently undoes the activation. ${rollbackTarget.customer_name || 'The customer'} will be unlinked from this card and lose access — activation date, amount paid, and coupon usage tied to this specific activation cannot be recovered. The card itself becomes reusable.`
+              : `This card still holds ${rollbackTarget.coupon_count} coupons from an earlier sale, which is why activating it fails. Clearing them makes the card sellable again.${Number(rollbackTarget.coupon_used_count || 0) > 0
+                  ? ` Warning: ${rollbackTarget.coupon_used_count} of those coupons was already used by a customer. That record will be deleted, and the benefit could be claimed again on the next sale.`
+                  : ' None of them have been used, so nothing of value is lost.'}`
+          }
           confirmLabel="Roll back card"
           danger
           onConfirm={rollbackCard}

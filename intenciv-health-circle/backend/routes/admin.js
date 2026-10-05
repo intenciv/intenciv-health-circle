@@ -562,6 +562,14 @@ router.get('/cards', async (req, res, next) => {
     const [rows] = await pool.execute(
       `SELECT c.id, c.card_number, c.status, c.activated_at, c.expires_at, c.amount_paid,
               c.customer_id,
+              -- Coupons still attached to a card that is not active are
+              -- leftovers from a previous sale that a rollback failed to clear
+              -- (see POST /cards/:id/rollback). Their codes are deterministic
+              -- from card_seq, so they collide with the ones the next
+              -- activation generates and the card cannot be sold again until
+              -- they are removed. Surfaced so the panel can flag and fix it.
+              (SELECT COUNT(*) FROM coupons cp WHERE cp.card_id = c.id) AS coupon_count,
+              (SELECT COUNT(*) FROM coupons cp WHERE cp.card_id = c.id AND cp.status = 'used') AS coupon_used_count,
               p.name AS plan_name,
               sp.full_name AS salesperson_name, sp.phone AS salesperson_phone,
               cu.full_name AS customer_name, cu.phone AS customer_phone
@@ -671,11 +679,17 @@ router.post('/cards/:id/rollback', requireAdminPassword, async (req, res, next) 
   try {
     await conn.beginTransaction();
     const [rows] = await conn.execute(
-      `SELECT id, status FROM cards WHERE id = ? LIMIT 1`,
+      `SELECT c.id, c.status, (SELECT COUNT(*) FROM coupons cp WHERE cp.card_id = c.id) AS coupon_count
+         FROM cards c WHERE c.id = ? LIMIT 1`,
       [req.params.id]
     );
     if (rows.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'card_not_found' }); }
-    if (rows[0].status === 'unused') { await conn.rollback(); return res.status(409).json({ error: 'card_already_unused' }); }
+    // An already-unused card is a no-op *unless* it is still carrying coupons
+    // from an earlier sale, which is exactly the stranded state this clears.
+    if (rows[0].status === 'unused' && Number(rows[0].coupon_count) === 0) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'card_already_unused' });
+    }
 
     const [del] = await conn.execute(`DELETE FROM coupons WHERE card_id = ?`, [req.params.id]);
 

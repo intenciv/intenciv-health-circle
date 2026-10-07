@@ -14,6 +14,7 @@ import SalespersonLayout          from './pages/salesperson/SalespersonLayout.js
 import SalespersonDashboard       from './pages/salesperson/SalespersonDashboard.jsx';
 import SalespersonCards           from './pages/salesperson/SalespersonCards.jsx';
 import SalespersonActivate        from './pages/salesperson/SalespersonActivate.jsx';
+import SalespersonPayment         from './pages/salesperson/SalespersonPayment.jsx';
 import { tokens } from './services/api';
 
 function RequireAdmin({ children }) {
@@ -58,6 +59,7 @@ export default function App() {
         <Route index                   element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard"        element={<SalespersonDashboard />} />
         <Route path="cards"            element={<SalespersonCards />} />
+        <Route path="payment"          element={<SalespersonPayment />} />
         <Route path="activate/:cardId" element={<SalespersonActivate />} />
       </Route>
 

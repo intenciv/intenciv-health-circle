@@ -34,6 +34,7 @@ export default function SalespersonLayout() {
       }}>
         <SalesNavLink to="/salesperson/dashboard" label="Dashboard" />
         <SalesNavLink to="/salesperson/cards"     label="My Cards" />
+        <SalesNavLink to="/salesperson/payment"   label="Pay" />
       </nav>
     </div>
   );
